@@ -1,0 +1,71 @@
+name: Windows release
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    env:
+      AGENTBOARD_UPDATE_PUBLIC_KEY: ${{ vars.AGENTBOARD_UPDATE_PUBLIC_KEY }}
+      AGENTBOARD_UPDATE_MANIFEST_URL: ${{ vars.AGENTBOARD_UPDATE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Validate version and publisher configuration
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag must exactly match package.json version.' }
+          if (-not $env:AGENTBOARD_UPDATE_PUBLIC_KEY) {
+            $publicKey = (Get-Content packaging/update-public-key.txt -Raw).Trim()
+            "AGENTBOARD_UPDATE_PUBLIC_KEY=$publicKey" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+      - name: Install official Inno Setup compiler
+        shell: pwsh
+        run: |
+          $compilerInstaller = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $compilerInstaller
+          $signature = Get-AuthenticodeSignature -LiteralPath $compilerInstaller
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys B\.V\.') { throw 'Official compiler signature check failed.' }
+          $process = Start-Process -FilePath $compilerInstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /NOICONS' -WindowStyle Hidden -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed.' }
+      - name: Build installer
+        shell: pwsh
+        run: ./scripts/build-desktop.ps1
+      - name: Test shared API and MCP contract
+        shell: pwsh
+        run: |
+          .venv-build/Scripts/python -m pytest tests -q
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
+          .venv-build/Scripts/python scripts/frozen_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen executable smoke failed.' }
+      - name: Sign update manifest
+        shell: pwsh
+        env:
+          AGENTBOARD_UPDATE_PRIVATE_KEY: ${{ secrets.AGENTBOARD_UPDATE_PRIVATE_KEY }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $installer = "Agentboard-Setup-$version.exe"
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$version/$installer"
+          .venv-build/Scripts/python scripts/release.py manifest --installer "artifacts/releases/$installer" --version $version --installer-url $url --public-key $env:AGENTBOARD_UPDATE_PUBLIC_KEY --output artifacts/releases/latest.json
+          if ($LASTEXITCODE -ne 0) { throw 'Manifest signing failed.' }
+      - name: Publish versioned installer and signed feed
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          gh release create "v$version" "artifacts/releases/Agentboard-Setup-$version.exe" artifacts/releases/latest.json --target $env:GITHUB_SHA --title "Agentboard $version" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }

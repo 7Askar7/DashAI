@@ -1,0 +1,5 @@
+fastapi==0.115.7
+uvicorn==0.44.0
+mcp==1.27.0
+httpx==0.28.1
+cryptography==50.0.2
