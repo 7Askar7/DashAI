@@ -16,7 +16,20 @@
 
 Первый native handoff выявил потерю Windows stdio handles при `CREATE_NO_WINDOW`; исправление явно передает родительские streams. Независимый critic воспроизвел первопричину и проверил исправленный frozen результат. Финальный VSIX содержит точно тот же исправленный companion, что проверенная сборка. Проверка установленных editor bridge и публичных каналов описана отдельно: [VS Code](verification/vscode-actual.md), [backend](verification/subprojects-backend.md), [критика VS Code](reviews/vscode-review.md), [критика подпроектов](reviews/subprojects-review.md).
 
-Локальные installer/VSIX и оба манифеста подписаны тем же Ed25519 ключом, что использовался в прежнем канале. Публичный GitHub CI выпуск проверяется после публикации; локальная сборка не выдается за скачанный Release.
+DashAI 1.4.0 [опубликован](https://github.com/7Askar7/DashAI/releases/tag/v1.4.0). [Windows CI 37230779187](https://github.com/7Askar7/DashAI/actions/runs/37230779187) завершился **success** на runtime commit `d27906a8ba0ecdf9341c7a0b277f49a224808d4e`, которому соответствует tag `v1.4.0`: Python 3.14.7, TypeScript/Vite, Inno/PyInstaller, VSIX packaging, **27 tests PASS**, frozen UI/API/MCP, native update handoff и **11 Node tests PASS**. Первый CI выявил отличие directory test resolution в Node 22; команда заменена двумя точными test files, повторена локально под Node 22 и прошла в окончательном CI. Runtime код от этой правки не менялся.
+
+Штатный desktop updater с версией 1.3.0 реально скачал публичный `latest.json` и весь installer 1.4.0; Ed25519 с прежним pinned ключом, размер и SHA-256 подтверждены. Same-version update отклонен. Публикация содержит четыре assets: EXE, VSIX и два независимых signed feed. При transient GitHub connect timeout проверка повторена без изменения TLS, подписей или transport; успешный результат сохранен в `artifacts/qa/public-release-1.4.0/result.json`.
+
+| Публичный asset | Байты | SHA-256 |
+| --- | ---: | --- |
+| `Agentboard-Setup-1.4.0.exe` | 25 494 418 | `cef974ec95b0a05449a39306258536dbe59b7f539bae6c6fc666d4a165b58348` |
+| `Agentboard-VSCode-1.4.0-win32-x64.vsix` | 36 863 662 | `132ef00c2b4078462e9949e10a64e31b04fa54d9c9fe1899bd9ee25a17cb4b8f` |
+
+Штатный VS Code updater реально скачал публичный VSIX и проверил подписанные size/SHA-256. Именно этот файл установлен в изолированный настоящий VS Code 1.139.1: **10 проверок PASS, exit 0**, `artifacts/qa/vscode-actual-88996f0743/results.json`. Проверены редактор, общая Kanban, frozen MCP, clipboard, экспорт и данные после restart. Выбор пути native Save Dialog подменен в test API; bridge, HTTP и запись файла настоящие. Рабочий редактор и личные application data пользователя не затрагивались.
+
+Независимый критик сам скачал оба binary asset, проверил четыре release assets, обе Ed25519-подписи через отдельную библиотеку, точное равенство latest/versioned feeds, отсутствие private files и CRC всех 206 entries публичного VSIX. Оба production verifiers отвергают этот feed для текущей 1.4.0 и 2.0.0. Критик отдельно сверил editor export с post-restart SQLite и всей audit историей: точное равенство, `integrity_check=ok`, credentials отсутствуют. Public evidence: `artifacts/qa/public-release-review-bb8527c688/results.json`. Все findings correctness/UX и отдельного Ponytail reviews закрыты.
+
+Локальная сборка и опубликованная CI-сборка проверяются раздельно: из-за Python minor и rebuild их binary hashes могут отличаться. Installer 1.4.0 не запускается поверх рабочего профиля пользователя; его frozen runtime проверен CI, а installation/update lifecycle предыдущих поставок описан ниже. AGENTS/CLAUDE и README в текущем source дополнены инструкциями по вложенным подпроектам. Реальные задачи **AD-011 и AD-012** завершены через MCP с change log, commit, evidence и переходом review → done после публичной проверки; итоговая база сохранена в `data/backups/dashai-1.4-delivery-2026-10-04.sqlite3`, backup integrity подтверждена.
 
 ## Фактически выполненные проверки
 

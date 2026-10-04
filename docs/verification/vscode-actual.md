@@ -30,8 +30,16 @@
 
 Полное копирование frozen runtime в Windows выявило временный `EPERM` при атомарном directory rename и `ENOTEMPTY` при уборке собственной staging папки. Ограниченное повторение только временных блокировок и штатные `fs.rm maxRetries/retryDelay` прошли с настоящим bundle. Личные данные и старые runtime пути не удаляются.
 
+## Опубликованный пакет 1.4.0
+
+После успешного [Windows CI 37230779187](https://github.com/7Askar7/DashAI/actions/runs/37230779187) штатный extension updater скачал публичный signed feed и VSIX, проверил pinned Ed25519, размер и SHA-256; same-version update отклонен. Доказательство: `artifacts/qa/public-vsix-1.4.0/results.json`. При transient network failures выполнены ограниченные повторы без изменения transport или security checks.
+
+Публичный VSIX **36 863 662 bytes**, SHA-256 `132ef00c2b4078462e9949e10a64e31b04fa54d9c9fe1899bd9ee25a17cb4b8f` отдельно установлен в portable VS Code **1.139.1**: **все 10 checks PASS, exit 0**, `artifacts/qa/vscode-actual-88996f0743/results.json`. Сценарии и граница SaveDialog stub те же, что у локального прогона. Именно опубликованные binary bytes проверены в редакторе; отличие hash от локального rebuild ожидаемо и не скрывается.
+
+Независимый критик повторно прочитал результаты и screenshot этого прогона, сверил весь JSON export с SQLite после restart и audit историей: точное равенство, `integrity_check=ok`, credentials отсутствуют. Отдельные downloads, обе подписи, latest feeds и ZIP public package подтверждены в [независимом отчете](../reviews/vscode-review.md).
+
 ## Границы
 
-Этот smoke проверяет установленный VSIX, runtime lifecycle и MCP, а не запускает сами модели Codex/Claude. Он не утверждает публикацию Marketplace. Подпроектные циклы, версии, конфликтующие записи и мобильный UI проверены в отдельных backend/UI отчетах; проверка подписанного публичного канала проводится отдельно после публикации.
+Этот smoke проверяет установленный VSIX, runtime lifecycle и MCP, а не запускает сами модели Codex/Claude. Он не утверждает публикацию Marketplace. Подпроектные циклы, версии, конфликтующие записи и мобильный UI проверены в отдельных backend/UI отчетах; подписанный публичный GitHub канал проверен после публикации, как описано выше.
 
 Реальная stdio передача из старого постоянного companion пути в новый active runtime проверена отдельным [frozen handoff smoke](vscode-handoff.md), включая native parent/child proof, общий API и освобождение handle при EOF.

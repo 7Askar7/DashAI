@@ -87,7 +87,7 @@ npm run connectors:setup -- --project-root "C:/path/to/project" --agent-name "Co
 
 Отдельного агента также можно создать в UI «Коннекторы». Его токен выдается один раз. Сервер определяет автора по токену; имя в произвольном payload не дает права действовать от чужого лица.
 
-MCP tools: `list_projects`, `create_project`, `get_board`, `ready_tasks`, `create_task`, `get_task`, `update_task`, `claim_task`, `add_note`, `log_change`, `get_history`, `connector_status`. Создавать раздел перед задачей не требуется; совместимость прежних section-инструментов описана в connector contract.
+MCP tools: `list_projects`, `create_project`, `get_board`, `ready_tasks`, `create_subproject`, `update_subproject`, `create_task`, `get_task`, `update_task`, `claim_task`, `add_note`, `log_change`, `get_history`, `connector_status`. Создавать раздел перед задачей не требуется; вложенные подпроекты и совместимость прежних section-инструментов описаны в connector contract.
 
 Рабочий цикл агента:
 
