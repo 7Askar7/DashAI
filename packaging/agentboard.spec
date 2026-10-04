@@ -18,9 +18,16 @@ datas = [
     (str(root / "CLAUDE.md"), "."),
 ]
 datas += copy_metadata("mcp")
+# AnyIO's optional TestRunner imports pytest; the application runs no test fixtures.
+excludes = ["pytest", "_pytest"]
 gui = Analysis([str(root / "desktop" / "main.py")], pathex=[str(root)],
-               datas=datas)
-mcp = Analysis([str(root / "desktop" / "mcp_entry.py")], pathex=[str(root)])
+               datas=datas, excludes=excludes)
+mcp = Analysis([str(root / "desktop" / "mcp_entry.py")], pathex=[str(root)], excludes=excludes)
+for analysis in (gui, mcp):
+    # The jsonschema hook collects an upstream benchmark fixture, not runtime schemas.
+    analysis.datas = [entry for entry in analysis.datas
+                      if not entry[0].replace("\\", "/").startswith("jsonschema/benchmarks/")]
+    assert not any(entry[0].partition(".")[0] in excludes for entry in analysis.pure), "Test modules in runtime"
 gui_exe = EXE(PYZ(gui.pure), gui.scripts, [], exclude_binaries=True,
               name="Agentboard", console=False, upx=False,
               version=str(generated / "version-info.txt"))

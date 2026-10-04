@@ -38,7 +38,7 @@ GitHub Releases продолжает распространять VSIX с под
 
 1. В [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage) выбрать **DashAI (7Askar7)**.
 2. Нажать **New extension → Visual Studio Code**.
-3. Выбрать готовый файл `Agentboard-VSCode-1.4.1-win32-x64.vsix` из `artifacts/releases` и выполнить загрузку.
+3. Выбрать готовый файл `Agentboard-VSCode-1.4.2-win32-x64.vsix` из `artifacts/releases` и выполнить загрузку.
 4. Дождаться завершения проверки Marketplace; затем открыть страницу расширения и проверить установку через VS Code.
 
 Пакет имеет PNG-логотип 128×128, английское описание, выбранную обложку и target Windows x64. Для этой ручной загрузки токен публикации в проект не добавляется. Будущую автоматическую публикацию можно настроить отдельно после первого успешного upload. Пакеты, опубликованные в Marketplace, обновляются также штатным механизмом VS Code; подписанный GitHub канал продолжает работать.
@@ -48,6 +48,8 @@ GitHub Releases продолжает распространять VSIX с под
 ## Отказ «suspicious content» при загрузке
 
 Первая ручная загрузка пакета 1.4.1 отклонена Marketplace с сообщением `Your extension has suspicious content`. Оно не указывает конкретное поле или файл. Повторная локальная проверка и независимый review не выявили нарушения metadata; это не доказывает прохождение серверной проверки или ложноположительное срабатывание. [Отчет](reviews/marketplace-rejection-review.md).
+
+После углубленного анализа подготовлен локальный кандидат **1.4.2**: из обоих frozen runtime исключены неиспользуемые модули `pytest`/`_pytest` и benchmark data `jsonschema`. Production schemas, backend, MCP, Tk и защита обновлений сохранены. Это исправление состава поставки; связь этих файлов с отказом Marketplace не установлена. [Сравнение пяти опубликованных пакетов](research/04-marketplace-packaging.md), [проверки кандидата](verification/marketplace-cleanup.md), [независимый review](reviews/marketplace-cleanup-review.md). Пакет 1.4.1 сохранен без изменений для диагностики; GitHub Release 1.4.2 и принятие кандидата Marketplace пока не заявляются.
 
 Открыть **Manage Publishers & Extensions → Contact Microsoft** и запросить проверку. Этот путь указан в [официальном FAQ публикации](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#i-need-help-with-my-vs-marketplace-account-or-support-in-publishing-an-extension). Команда Marketplace также направляет случаи с той же ошибкой на **VSMarketplace@microsoft.com**: [ответ команды](https://github.com/microsoft/vsmarketplace/issues/2010#issuecomment-4959860814).
 
