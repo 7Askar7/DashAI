@@ -45,6 +45,10 @@ node scripts/python.mjs -m pytest tests/test_api.py::test_project_board_task_typ
 
 Дополнительный независимый [Ponytail/native review](task-types-ponytail-review.md) фиксирует найденную и закрытую проблему фокуса.
 
+## Публичный релиз 1.3.0
+
+**PASS, независимая read-only проверка после публикации.** [Release v1.3.0](https://github.com/7Askar7/DashAI/releases/tag/v1.3.0) и успешный [CI 37223585980](https://github.com/7Askar7/DashAI/actions/runs/37223585980) указывают на commit `8dcf0bd03d1401c67bde95ebf2ca411ac1cda61b`. Публичный HTTPS `latest.json` проверен штатным updater со старым pinned Ed25519 key, совпадающим с bundled channel; предлагается версия 1.3.0, для установленной 1.3.0 результат — `None`. URL и версия установщика совпадают с release asset `Agentboard-Setup-1.3.0.exe`; подписанные size `24,137,640` и SHA256 `66f9bd88879c0abbce993286025da43358369df48cb44d35190d1e392bd86865` точно совпадают с публичными GitHub asset metadata. Размер и digest самого feed также совпадают. Результат: `artifacts/qa/public-release-1.3.0-critic/result.json`.
+
 ## Границы проверки
 
-Проверены production web UI, реальные API и stdio MCP; не заявляется новый install/update lifecycle или публикация 1.3.0. Installer и CI этим reviewer не запускались. Legacy fixture представляет прежнюю форму сохраненных данных; рабочие проекты пользователя не использовались.
+Проверены production web UI, реальные API, stdio MCP и публичный подписанный канал релиза 1.3.0. Install/update lifecycle повторно не выполнялся: reviewer не скачивал и не запускал EXE, не запускал CI. Legacy fixture представляет прежнюю форму сохраненных данных; рабочие проекты пользователя не использовались.
