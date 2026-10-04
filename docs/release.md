@@ -1,6 +1,8 @@
 # Установка на компьютер и выпуск обновлений
 
-Agentboard 1.1.0 упакован как приложение Windows 10/11 x64. Пользователю достаточно запустить `Agentboard-Setup-1.1.0.exe`: Python, Node.js и checkout ему не нужны. Установка не запрашивает права администратора. Ярлык «Agentboard» открывает приложение и локальную доску в браузере.
+Agentboard устанавливается как приложение Windows 10/11 x64. Пользователю достаточно скачать установщик из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest) и запустить его: Python, Node.js и checkout ему не нужны. Установка не запрашивает права администратора. Ярлык «Agentboard» открывает приложение и локальную доску в браузере.
+
+В версии 1.2.0 доска объединяет все задачи проекта в пять колонок по статусам. Разделы сохраняются как метки карточек и фильтр; список остается доступен. Карточку можно перетащить в другую колонку или переместить через поле «Переместить» с выбором статуса, в том числе с клавиатуры. Перед сохранением нужна причина; история фиксирует автора и смену статуса. Обновление сохраняет существующие проекты, разделы, карточки и историю без переноса данных в новую базу.
 
 Программа устанавливается в `%LOCALAPPDATA%\Programs\Agentboard`. Каждый пользователь Windows хранит свое пространство в `%LOCALAPPDATA%\Agentboard`: база, история, credentials, резервные копии и логи. Установщик не содержит ни проектов разработчика, ни его токенов. Обновление заменяет программу, сохраняя личные данные. Удаление приложения также сохраняет эту папку; стереть личные данные можно отдельно после резервной копии.
 
@@ -40,13 +42,13 @@ Helper использует штатный Windows PowerShell 5.1 и его си
 
 ```powershell
 git add .
-git commit -m "Release 1.1.1"
+git commit -m "Release 1.2.0"
 git push origin main
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
-Workflow `.github/workflows/release.yml` на Windows собирает production UI, два самостоятельных EXE и Inno Setup installer, запускает тесты, подписывает манифест и публикует Release с `Agentboard-Setup-1.1.1.exe` и `latest.json`. Private key доступен только шагу подписи. В installed bundle попадают публичный ключ, адрес канала и лицензии зависимостей.
+Workflow `.github/workflows/release.yml` на Windows собирает production UI, два самостоятельных EXE и Inno Setup installer, запускает тесты, подписывает манифест и публикует Release с `Agentboard-Setup-1.2.0.exe` и `latest.json`. Private key доступен только шагу подписи. В installed bundle попадают публичный ключ, адрес канала и лицензии зависимостей.
 
 Выпуск можно запустить также без терминала: GitHub → Actions → **Windows release** → **Run workflow** для выбранной ветки. Workflow берет версию из `package.json`, создает соответствующий tag и Release для того же commit, который был собран. Уже существующий Release с этой версией не перезаписывается: для следующего выпуска увеличьте версию.
 
@@ -64,14 +66,14 @@ Tag должен совпадать с `package.json`; prerelease suffix в эт
 ./scripts/build-desktop.ps1 -ManifestUrl 'https://github.com/7Askar7/DashAI/releases/latest/download/latest.json'
 ```
 
-Результат: `artifacts/releases/Agentboard-Setup-1.1.0.exe`; распакованное приложение: `artifacts/desktop/Agentboard/`. Build читает только явно перечисленные ресурсы, а не копирует весь checkout. `data/`, `.mcp.json`, `.codex/config.toml`, Git и development environment не упаковываются. Если compiler установлен нестандартно, передать `-InnoCompiler 'C:/path/to/ISCC.exe'`.
+Результат для версии 1.2.0: `artifacts/releases/Agentboard-Setup-1.2.0.exe`; распакованное приложение: `artifacts/desktop/Agentboard/`. Build читает только явно перечисленные ресурсы, а не копирует весь checkout. `data/`, `.mcp.json`, `.codex/config.toml`, Git и development environment не упаковываются. Если compiler установлен нестандартно, передать `-InnoCompiler 'C:/path/to/ISCC.exe'`.
 
 Если `python` в PATH указывает на старую среду, при первой сборке передать `-PythonExecutable 'C:/Python314/python.exe'`. Версия Python runtime включается в EXE; старые Anaconda environments не используются для распространяемой сборки.
 
 Для собственного хостинга подписать уже собранный установщик:
 
 ```powershell
-.venv-build/Scripts/python scripts/release.py manifest --installer artifacts/releases/Agentboard-Setup-1.1.0.exe --version 1.1.0 --installer-url 'https://example.org/releases/Agentboard-Setup-1.1.0.exe' --private-key-file 'C:/secure/agentboard-update-private.txt' --public-key 'BASE64_PUBLIC_KEY' --output artifacts/releases/latest.json
+.venv-build/Scripts/python scripts/release.py manifest --installer artifacts/releases/Agentboard-Setup-1.2.0.exe --version 1.2.0 --installer-url 'https://example.org/releases/Agentboard-Setup-1.2.0.exe' --private-key-file 'C:/secure/agentboard-update-private.txt' --public-key 'BASE64_PUBLIC_KEY' --output artifacts/releases/latest.json
 ```
 
 ## Проверить перед распространением

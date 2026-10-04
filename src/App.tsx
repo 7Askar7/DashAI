@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  ApiError,
   date,
   statuses,
   priorities,
@@ -52,7 +53,9 @@ import {
   type Project,
   type Section,
   type Task,
+  type Status,
 } from "./api";
+import KanbanBoard from "./KanbanBoard";
 
 type View = "overview" | "board" | "project_history" | "history" | "connectors";
 type Modal =
@@ -123,7 +126,10 @@ function Dialog({
       ref={ref}
       className={drawer ? "drawer" : "modal"}
       aria-labelledby={label}
-      onCancel={() => closeRef.current()}
+      onCancel={(event) => {
+        event.preventDefault();
+        closeRef.current();
+      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) closeRef.current();
       }}
@@ -227,6 +233,68 @@ function ErrorBox({
       )}
     </div>
   );
+}
+
+function MoveTaskDialog({ task, status, onClose, onOpen, onMoved }: {
+  task: Task;
+  status: Status;
+  onClose: () => void;
+  onOpen: () => void;
+  onMoved: (updated: Task) => Promise<void>;
+}) {
+  const [current, setCurrent] = useState(task),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [stale, setStale] = useState(false);
+  const key = useRef(crypto.randomUUID());
+  const label = (value: Status) => statuses.find((item) => item.value === value)!.label;
+  async function refreshConflict() {
+    setBusy(true);
+    try {
+      const latest = await api<Detail>(`/tasks/${task.id}`);
+      setCurrent(latest.task);
+      key.current = crypto.randomUUID();
+      setStale(false);
+      setError(latest.task.status === status
+        ? "Карточка уже находится в выбранной колонке. Закройте окно или откройте задачу."
+        : `Данные обновлены до версии ${latest.task.version}. Сейчас: «${label(latest.task.status)}». Причина сохранена; подтвердите перемещение ещё раз.`);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await api<Task>(`/tasks/${task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ expected_version: current.version, changes: { status },
+          reason: text(new FormData(event.currentTarget), "reason"), idempotency_key: key.current }),
+      });
+      await onMoved(updated);
+    } catch (error) {
+      setError((error as Error).message);
+      setStale(error instanceof ApiError && error.status === 409 && error.message.startsWith("Конфликт изменений."));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <Dialog title="Переместить задачу" onClose={() => { if (!busy) onClose(); }}>
+    <form className="entity-form" onSubmit={submit}>
+      <p className="move-task-title"><span>{current.short_id}</span>{current.title}</p>
+      <div className="move-summary"><StatusPill status={current.status} /><ArrowRight size={17} aria-hidden="true" /><StatusPill status={status} /></div>
+      <Field label="Почему перемещаем задачу" name="reason" area required hint="Причина и смена статуса сохранятся в истории. Карточка переместится после подтверждения." />
+      {error && <ErrorBox message={error} onRefresh={stale && !busy ? refreshConflict : undefined} />}
+      <div className="form-footer move-footer">
+        <button type="button" className="text-button" disabled={busy} onClick={onOpen}>Открыть задачу</button>
+        <button type="button" className="button secondary" disabled={busy} onClick={onClose}>Отмена</button>
+        <button type="submit" className="button primary" disabled={busy || stale || current.status === status}>{busy ? "Сохраняем…" : "Переместить"}</button>
+      </div>
+    </form>
+  </Dialog>;
 }
 
 function EntityForm({
@@ -1386,6 +1454,7 @@ export default function App() {
     [error, setError] = useState(""),
     [syncAt, setSyncAt] = useState<string | null>(null),
     [modal, setModal] = useState<Modal | null>(null),
+    [move, setMove] = useState<{ task: Task; status: Status } | null>(null),
     [detail, setDetail] = useState<Detail | null>(null),
     [drawerBoard, setDrawerBoard] = useState<Board | null>(null),
     [toast, setToast] = useState(""),
@@ -1404,6 +1473,7 @@ export default function App() {
     [historyAgent, setHistoryAgent] = useState(""),
     [historyLoading, setHistoryLoading] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null),
+    moveFocus = useRef<string | null>(null),
     projectRef = useRef(projectId),
     loadSequence = useRef(0),
     detailSequence = useRef(0),
@@ -1490,6 +1560,16 @@ export default function App() {
       loadHistory(true);
     }
   }, [view, projectId]);
+  useEffect(() => {
+    if (move || !moveFocus.current) return;
+    const id = moveFocus.current;
+    moveFocus.current = null;
+    if (document.querySelector("dialog[open]")) return;
+    const selector = document.querySelector<HTMLSelectElement>(`.kanban-card[data-task-id="${CSS.escape(id)}"] select`);
+    const target = selector?.getClientRects().length ? selector
+      : document.querySelector<HTMLButtonElement>('.kanban-status-nav button[aria-pressed="true"]');
+    target?.focus();
+  }, [move]);
   async function loadHistory(reset = false) {
     if (historyBusy.current && !reset) return;
     const scope = historyScope.current,
@@ -1539,6 +1619,7 @@ export default function App() {
     setStatusFilter("");
     setPriorityFilter("");
     setMobileMenu(false);
+    setMove(null);
     closeDetail();
   }
   function closeDetail() {
@@ -1577,6 +1658,15 @@ export default function App() {
   async function changed() {
     await Promise.all([refresh(projectRef.current, true), updateDetail()]);
     notify("Изменения сохранены в истории");
+  }
+  async function moved(updated: Task) {
+    moveFocus.current = updated.id;
+    setMove(null);
+    setBoard((previous) => previous && previous.project.id === updated.project_id
+      ? { ...previous, tasks: previous.tasks.map((task) => task.id === updated.id ? updated : task) }
+      : previous);
+    notify("Карточка перемещена. Причина сохранена в истории");
+    await refresh(projectRef.current, true);
   }
   async function saved(id?: string, taskId?: string) {
     if (id) {
@@ -1619,7 +1709,7 @@ export default function App() {
     query ||
     sectionFilter ||
     agentFilter ||
-    statusFilter ||
+    (listView && statusFilter) ||
     priorityFilter
   );
   const tasks =
@@ -1630,7 +1720,7 @@ export default function App() {
           (agentFilter === "unassigned"
             ? !t.assignee_id
             : t.assignee_id === agentFilter)) &&
-        (!statusFilter || t.status === statusFilter) &&
+        (!listView || !statusFilter || t.status === statusFilter) &&
         (!priorityFilter || t.priority === priorityFilter) &&
         (!query ||
           `${t.short_id} ${t.title} ${t.description} ${t.rationale}`
@@ -2123,7 +2213,7 @@ export default function App() {
                           </option>
                         ))}
                       </select>
-                      <select
+                      {listView && <select
                         aria-label="Фильтр статуса"
                         value={statusFilter}
                         onChange={(e) => setStatusFilter(e.target.value)}
@@ -2134,7 +2224,7 @@ export default function App() {
                             {s.label}
                           </option>
                         ))}
-                      </select>
+                      </select>}
                       <select
                         aria-label="Фильтр приоритета"
                         value={priorityFilter}
@@ -2204,33 +2294,13 @@ export default function App() {
                       </button>
                     </div>
                   ) : (
-                    <div className={`board ${listView ? "is-list" : ""}`}>
-                      {!listView && (
-                        <div className="column-headings">
-                          {statuses.map((s) => (
-                            <div
-                              className={`column-heading ${s.value}`}
-                              key={s.value}
-                            >
-                              <span className="status-dot" />
-                              <strong>{s.label}</strong>
-                              <span className="count">
-                                {
-                                  tasks.filter((t) => t.status === s.value)
-                                    .length
-                                }
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                    !listView ? <KanbanBoard key={board.project.id} tasks={tasks} agents={bootstrap.agents} sections={board.sections}
+                      onOpen={openTask} onMove={(task, status) => setMove({ task, status })} /> : (
+                    <div className="board is-list">
                       {visibleSections.map((section, index) => {
-                        const sectionTasks = tasks.filter(
-                            (t) => t.section_id === section.id,
-                          ),
+                        const sectionTasks = tasks.filter((task) => task.section_id === section.id),
                           isCollapsed = collapsed.includes(section.id);
-                        return (
-                          <section className="board-section" key={section.id}>
+                        return <section className="board-section" key={section.id}>
                             <div className="section-header">
                               <button
                                 className="section-toggle"
@@ -2279,39 +2349,12 @@ export default function App() {
                                 </button>
                               </div>
                             </div>
-                            {!isCollapsed && (
-                              <>
-                                {section.description && (
-                                  <p className="section-description">
-                                    {section.description}
-                                  </p>
-                                )}
-                                <div
-                                  className={
-                                    listView ? "task-list" : "swimlane"
-                                  }
-                                >
-                                  {(listView ? [null] : statuses).map(
-                                    (status) => (
-                                      <div
-                                        className={
-                                          listView
-                                            ? "list-items"
-                                            : `board-column ${status?.value}`
-                                        }
-                                        key={status?.value || "list"}
-                                      >
-                                        {sectionTasks
-                                          .filter(
-                                            (t) =>
-                                              !status ||
-                                              t.status === status.value,
-                                          )
-                                          .map((task) => {
-                                            const agent = bootstrap.agents.find(
-                                              (a) => a.id === task.assignee_id,
-                                            );
-                                            return (
+                            {!isCollapsed && <>
+                              {section.description && <p className="section-description">{section.description}</p>}
+                              <div className="task-list"><div className="list-items">
+                                {sectionTasks.map((task) => {
+                                  const agent = bootstrap.agents.find((item) => item.id === task.assignee_id);
+                                  return (
                                               <button
                                                 className={`task-card ${task.status}`}
                                                 key={task.id}
@@ -2343,11 +2386,7 @@ export default function App() {
                                                 <p className="task-rationale">
                                                   {task.rationale}
                                                 </p>
-                                                {listView && (
-                                                  <StatusPill
-                                                    status={task.status}
-                                                  />
-                                                )}
+                                                <StatusPill status={task.status} />
                                                 <div className="task-card-footer">
                                                   <span className="card-assignee">
                                                     <Avatar
@@ -2373,26 +2412,14 @@ export default function App() {
                                                   </span>
                                                 </div>
                                               </button>
-                                            );
-                                          })}
-                                        {!listView &&
-                                          !sectionTasks.some(
-                                            (t) => t.status === status?.value,
-                                          ) && (
-                                            <div className="empty-column">
-                                              <span>Нет задач</span>
-                                            </div>
-                                          )}
-                                      </div>
-                                    ),
-                                  )}
-                                </div>
-                              </>
-                            )}
-                          </section>
-                        );
+                                  );
+                                })}
+                              </div></div>
+                            </>}
+                          </section>;
                       })}
                     </div>
+                    )
                   )}
                   <button
                     className="add-section"
@@ -2514,6 +2541,9 @@ export default function App() {
           onSaved={saved}
         />
       )}
+      {move && <MoveTaskDialog key={`${move.task.id}:${move.status}`} task={move.task} status={move.status}
+        onClose={() => setMove(null)} onMoved={moved}
+        onOpen={() => { setMove(null); openTask(move.task.id); }} />}
       {detail && drawerBoard && (
         <TaskDrawer
           key={detail.task.id}

@@ -70,3 +70,16 @@ Lifecycle использует отдельную папку и временну
 - Результат сетевой проверки: `artifacts/qa/public-release-1.1.0/result.json`.
 
 Локальный lifecycle проверял замену приложения QA-версией и сохранение данных; опубликованный installer отдельно прошёл frozen smoke на Windows runner. Сетевое скачивание здесь не выдаётся за повторную установку на рабочем профиле пользователя.
+
+## Единый Kanban 1.2.0
+
+Доска всего проекта теперь состоит из пяти самостоятельных колонок, а не рядов разделов с общей сеткой. Карточка находится только в колонке своего статуса; раздел указан меткой и доступен как фильтр. Подтверждено отдельным [Kanban review](reviews/kanban-review.md).
+
+- Production build / TypeScript **PASS**, проверенный JS `index-CM5xKQTw.js`, CSS `index-9LvY9Z7e.css`.
+- Общая browser regression: **9 групп PASS**, включая создание/правки/export/persistence и мобильный reflow; smoke адаптирован к новым карточкам и мобильной выбранной колонке.
+- Независимый `node scripts/python.mjs scripts/kanban_smoke.py`: **9 групп PASS** на настоящем браузере и временной SQLite. Проверены whole-project grouping, section filter, list-only status filter, native drag, required reason/cancel, audit before/after/author/reload, evidence gate, настоящий concurrent PATCH, сохранение причины и чужих полей, потеря успешного ответа и idempotent retry с одной записью истории, клавиатура и mobile status navigation.
+- Найденная потеря фокуса после перемещения закрыта: desktop фокусируется на поле перемещения новой карточки, mobile — на видимой кнопке выбранного статуса. Regression сохранен; one-shot animation frame был заменен эффектом после React commit.
+- **17 API/MCP/desktop/release tests PASS** и настоящий **frozen smoke PASS** для runtime 1.2.0. Финальная frontend-правка не меняет backend, схему базы или процесс подписанного обновления.
+- Отдельные Ponytail-reviews компонента, CSS и упаковки: **Lean already. Ship.** Новых зависимостей нет; старые swimlane CSS удалены.
+
+Геометрия: при 1440 px все пять колонок помещаются (`clientWidth = scrollWidth = 1138`); при 390/320 px видна одна выбранная колонка, page overflow отсутствует. `page_errors = []`. Артефакты: `artifacts/qa/kanban-results.json`, `kanban-desktop.png`, `kanban-mobile-390.png`, `kanban-mobile-320.png`. Тестовые карточки не добавлялись в рабочую базу.

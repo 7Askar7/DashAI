@@ -126,9 +126,9 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 search.fill('несуществующая')
                 expect(page.get_by_role('heading',name='Задачи не найдены')).to_be_visible()
                 page.get_by_role('button',name='Сбросить фильтры',exact=True).last.click()
-                expect(page.locator('.task-card')).to_have_count(1)
+                expect(page.locator('.kanban-card')).to_have_count(1)
                 page.reload()
-                expect(page.locator('.task-card')).to_have_count(1)
+                expect(page.locator('.kanban-card')).to_have_count(1)
                 with page.expect_download() as download:
                     page.get_by_role('button',name='Экспортировать проект').click()
                 export_path=ARTIFACTS/'browser-export.json'
@@ -139,6 +139,9 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 page.screenshot(path=str(ARTIFACTS/'ui-smoke-desktop.png'),full_page=True)
                 for width in (390,320):
                     page.set_viewport_size({'width':width,'height':844})
+                    page.locator('.kanban-status-nav').get_by_role('button', name='Готово').click()
+                    expect(page.locator('.kanban-column:visible')).to_have_count(1)
+                    expect(page.locator('.kanban-card:visible')).to_have_count(1)
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'reflow failed at {width}px'
                     page.screenshot(path=str(ARTIFACTS/f'ui-smoke-mobile-{width}.png'),full_page=True)
                 checks.append('390px/320px board reflow')
