@@ -86,17 +86,22 @@ def main() -> None:
                 assert b"<html" in response.read(1024)
             with opener.open(url + "/api/connectors", timeout=5) as response:
                 metadata = json.load(response)
-            assert metadata["credentials_file"] == str(data / "connector-secrets.json")
+            assert Path(metadata["credentials_file"]).samefile(data / "connector-secrets.json")
+            assert Path(metadata["python_command"]).samefile(companion)
+            assert Path(metadata["data_dir"]).samefile(data)
+            assert metadata["desktop"] is True and metadata["mcp_script"] == "--mcp"
             setup = subprocess.run([str(companion), "--setup-connectors", "--project-root", str(repository),
                                     "--data-dir", str(data)], capture_output=True, text=True, timeout=30)
             assert setup.returncode == 0, setup.stderr
             claude = json.loads((repository / ".mcp.json").read_text(encoding="utf-8"))
             codex = tomllib.loads((repository / ".codex" / "config.toml").read_text(encoding="utf-8"))
             for entry in (claude["mcpServers"]["agentboard"], codex["mcp_servers"]["agentboard"]):
-                assert entry["command"] == str(companion)
+                assert Path(entry["command"]).samefile(companion)
                 assert entry["args"][0] == "--mcp"
-                assert str(data) in entry["args"]
+                assert Path(entry["args"][entry["args"].index("--data-dir") + 1]).samefile(data)
+                assert Path(entry["args"][entry["args"].index("--credentials") + 1]).samefile(data / "connector-secrets.json")
                 assert "--url" not in entry["args"]
+            assert Path(codex["mcp_servers"]["agentboard"]["cwd"]).samefile(repository)
             asyncio.run(protocol(str(companion), data))
         finally:
             if process.poll() is None:
