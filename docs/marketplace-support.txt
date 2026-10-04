@@ -1,27 +1,43 @@
 To: VSMarketplace@microsoft.com
-Subject: Request for review: DashAI / 7Askar7.agentboard upload rejected
+Subject: Repeated suspicious-content rejection: DashAI / 7Askar7.agentboard 1.4.2
 
 Hello Visual Studio Marketplace team,
 
-I created the publisher 7Askar7 (display name DashAI). My first manual VSIX upload through Manage Publishers & Extensions was rejected with:
+I created the publisher 7Askar7 (display name DashAI). Manual uploads of versions 1.4.1 and 1.4.2 through Manage Publishers & Extensions were both rejected with the same message:
 
 "Your extension has suspicious content. Please fix your extension metadata, or contact support if you need assistance."
 
 Publisher: 7Askar7
 Extension ID: 7Askar7.agentboard
 Display name: DashAI
-Version: 1.4.1
+Latest rejected version: 1.4.2
 Target: win32-x64
 Repository: https://github.com/7Askar7/DashAI
-Source commit: 2a5e8a44a47ace66c674c8c5310212efd2583232
-VSIX: Agentboard-VSCode-1.4.1-win32-x64.vsix
-Size: 35,895,190 bytes
-SHA-256: 45606ffcbd11de215ff09705e0c4fdbd9d57b5c08d5e0ee7647b3d387447fac2
+Source commit: 4b07d5032085bc00472b351a5895488ab67fb08a
+VSIX: Agentboard-VSCode-1.4.2-win32-x64.vsix
+Size: 35,881,575 bytes
+SHA-256: 7cf58fef889944f794eef99bca921288b6556ea86f20d95080e4d08078fa982e
+package.json keywords: kanban, codex, claude, agents, local
+Exact generated VSIX Tags: kanban,codex,claude,agents,local
+Description: A local Kanban dashboard for Codex and Claude Code: projects, subprojects, tasks, and change history inside VS Code.
+
+The earlier rejected 1.4.1 is retained for comparison: 35,895,190 bytes, SHA-256 45606ffcbd11de215ff09705e0c4fdbd9d57b5c08d5e0ee7647b3d387447fac2. Version 1.4.2 removes unused pytest modules and an upstream benchmark fixture from the frozen runtime; these changes did not resolve the rejection. Neither version has been published in Marketplace. The local 1.4.2 candidate is not available through the existing GitHub Releases channel; I can share its exact bytes privately.
 
 DashAI is a local task board with project history and MCP connectors for independently installed Codex and Claude Code clients. It bundles a PyInstaller Windows runtime and MCP companion so users do not need Python. The server listens only on localhost; personal data is stored separately in the user's local application folder. Optional updates use a pinned Ed25519 key and SHA-256 verification of GitHub Releases downloads.
 
-The package was built with @vscode/vsce. We checked JSON/XML metadata consistency, PNG icon dimensions, HTTPS README images, reachable project/support links, ZIP integrity, and isolation from our private credentials and project data. There are no bundled node_modules. Ten installation, UI, MCP, export, and persistence checks passed in an isolated official VS Code installation. These local checks do not reproduce the Marketplace's security screening.
+The package was built with @vscode/vsce 4.0.0. We checked JSON/XML metadata consistency, PNG icon dimensions, HTTPS README images, reachable project/support links, ZIP integrity, and isolation from our private credentials and project data. There are no bundled node_modules. Microsoft Defender reported no threats, and the official vsce secret scanner reported no findings. Ten installation, UI, MCP, export, and persistence checks passed in an isolated official VS Code installation. These local checks do not reproduce the Marketplace's security screening or establish a false positive.
 
-Please review this submission and publisher, and identify the specific field, file, or account requirement causing the rejection. If publisher/contact verification is required, please explain the steps. I can provide the exact VSIX and the upload error screenshot on request.
+Please review this submission and publisher, and clarify:
+
+1. Is this a metadata/keyword/name validation, a publisher/account requirement, or a file/malware finding?
+2. Which exact field/value or file/detection caused the rejection, and what correction is required?
+3. Can you review the existing publisher and extension identity in place? No public exact-name collision was found, but we cannot inspect reserved names or internal similarity rules.
+
+For comparison, the Vera author documented a support response about blocked keywords and later a successful Marketplace download of the previously rejected, unchanged VSIX:
+https://github.com/aallan/vera/issues/1106#issuecomment-5046899010
+https://github.com/aallan/vera/pull/1165
+This is context for requesting a specific finding, not a claim that DashAI has the same cause.
+
+Please let me know how to securely provide the exact VSIX, generated manifests, and upload error screenshot. I can also supply the latest upload time and correlation ID if available from the portal.
 
 Thank you.
