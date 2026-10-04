@@ -60,3 +60,9 @@ Microsoft отдельно описывает этот Windows PowerShell compat
 Прочитан `.agents/skills/ponytail-review/SKILL.md`. Проверены desktop modules, console companion, PyInstaller spec, Inno installer, сборка, publisher CLI и workflow. Два executable нужны для разных console режимов; queue/thread нужны для неблокирующего updater; криптографическая зависимость защищает запуск обновлений. Повторяющихся framework layers, speculative interfaces и лишних runtime зависимостей не обнаружено.
 
 **Lean already. Ship.**
+
+## Публичный выпуск: независимая read-only проверка
+
+После успешного [CI 37210113381](https://github.com/7Askar7/DashAI/actions/runs/37210113381) отдельный `desktop_critic` подтвердил публичный non-draft [релиз 1.1.0](https://github.com/7Askar7/DashAI/releases/tag/v1.1.0) и точный build commit `cbbb6ecc3a26537cf92e2ffda75125aa225c8cf6`. Release assets: `Agentboard-Setup-1.1.0.exe` и `latest.json`.
+
+Реальный `check_update` скачал manifest без GitHub credentials. Ed25519 signature проверена встроенным public key; installer URL соответствует публичному asset, signed size **24 124 234** и SHA-256 `a362c993df3ebfc5c5c9af5ed3a5cfea12c8548268509db99ca20b58771cbaae` совпадают с GitHub asset metadata. Клиент 1.0.0 видит обновление 1.1.0; клиент 1.1.0 не получает повторное обновление. Версия и public key исходного commit совпадают с bundle. Документация корректно ограничивает автоматическую проверку временем работы приложения. Замечаний нет; установщик на рабочем профиле не запускался.

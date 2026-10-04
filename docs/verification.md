@@ -47,7 +47,7 @@ Codex project config начинает действовать после дове
 
 ## Windows-поставка 1.1.0
 
-Проверена отдельная установка без Python, Node.js, checkout и административных прав. Собранный `Agentboard-Setup-1.1.0.exe` использует Python 3.14.3 и хранит пользовательскую SQLite/credentials отдельно от программы. В installer встроены публичный ключ издателя и HTTPS feed DashAI; private key, рабочая база и project connector configs в bundle отсутствуют.
+Проверена отдельная установка без Python, Node.js, checkout и административных прав. Локальная сборка `Agentboard-Setup-1.1.0.exe` использует Python 3.14.3; опубликованная CI-сборка — Python 3.14.7. Пользовательская SQLite/credentials хранится отдельно от программы. В installer встроены публичный ключ издателя и HTTPS feed DashAI; private key, рабочая база и project connector configs в bundle отсутствуют.
 
 - **17 тестов PASS** в изолированной production build-среде: 9 API, 5 MCP/launcher, 2 desktop security/resource checks и 1 release contract.
 - **Frozen smoke PASS**: windowed EXE поднимает настоящий UI/API, console companion через официальный SDK создает проект, раздел и карточку; project configs используют установленный EXE. Stdio shutdown завершается без traceback.
@@ -58,3 +58,15 @@ Codex project config начинает действовать после дове
 Lifecycle использует отдельную папку и временную тестовую регистрацию установщика. Итог: `artifacts/qa/desktop-lifecycle-20261004-172146/result.json`; тестовая регистрация Windows восстановлена, рабочая база пользователя не использовалась. Из сравнения экспорта исключалось только динамическое время самого export-запроса, а не данные или timestamps истории.
 
 Все замечания независимого [desktop-review](reviews/desktop-review.md) исправлены и перепроверены; отдельный Ponytail-review — **Lean already. Ship.** Границы: Windows 10/11 x64; браузерный UI; pinned Ed25519 channel key; начальный installer без платного Authenticode сертификата. Это не полная реализация TUF и не тест всех будущих миграций схемы. [Процесс установки и выпуска](release.md).
+
+## Опубликованный релиз и настоящий канал
+
+[GitHub Actions 37210113381](https://github.com/7Askar7/DashAI/actions/runs/37210113381) успешно собрал commit `cbbb6ecc3a26537cf92e2ffda75125aa225c8cf6`, выполнил **17 tests PASS** и реальный frozen smoke, затем подписал manifest и опубликовал [Agentboard 1.1.0](https://github.com/7Askar7/DashAI/releases/tag/v1.1.0). Предыдущие два CI-запуска остановились до публикации; найденные PowerShell module-path и Windows path-alias ошибки исправлены и повторно проверены.
+
+Штатный `desktop.updates` скачал публичный `latest.json` и весь опубликованный installer по настоящему HTTPS-каналу GitHub, без API credentials. Ed25519 signature, signed size и SHA-256 проверены; версия 1.1.0 предлагается для клиента 1.0.0, а для текущей 1.1.0 повторная установка не предлагается. Частичный `.part` файл после успешной загрузки отсутствует.
+
+- Installer: `Agentboard-Setup-1.1.0.exe`, **24 124 234 bytes**.
+- SHA-256: `a362c993df3ebfc5c5c9af5ed3a5cfea12c8548268509db99ca20b58771cbaae`.
+- Результат сетевой проверки: `artifacts/qa/public-release-1.1.0/result.json`.
+
+Локальный lifecycle проверял замену приложения QA-версией и сохранение данных; опубликованный installer отдельно прошёл frozen smoke на Windows runner. Сетевое скачивание здесь не выдаётся за повторную установку на рабочем профиле пользователя.
