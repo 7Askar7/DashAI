@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Annotated, Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
@@ -43,7 +44,9 @@ INSTRUCTIONS = (
     "do not overwrite stale work. Actor comes from credentials. Never put secrets or hidden reasoning in notes. "
     "Renew your lease with claim_task and fresh version. Reads and note-write replies return bounded previews; "
     "task summaries preview dependency IDs (get_task keeps them all), history snapshots/notes preview long text and files. "
-    "dashboard export retains full history. last_seen means last API request, not a running agent session."
+    "dashboard export retains full history. All tasks share one project board; choose task_type independently from status. "
+    "Use optional subproject_id to group parallel work; create_subproject parent_id links nested workstreams. "
+    "last_seen means last API request, not a running agent session."
 )
 
 
@@ -58,7 +61,15 @@ class TaskChanges(BaseModel):
     task_type: TaskType | None = None
     assignee_id: Identifier | None = None
     section_id: Identifier | None = None
+    subproject_id: Identifier | None = None
     depends_on: list[Identifier] | None = Field(default=None, max_length=128)
+
+
+class SubprojectChanges(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: Title | None = None
+    description: Description | None = None
+    parent_id: Identifier | None = None
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -100,6 +111,52 @@ def connection_options(credentials: Path | None = None, data_dir: Path | None = 
             url = runtime["base_url"]
     credentials = (credentials or (data_dir or default_data_dir()) / "connector-secrets.json").resolve()
     return credentials, validate_url(url or "http://127.0.0.1:4242")
+
+
+def forwarding_target(data_dir: Path | None, url: str | None) -> Path | None:
+    """An old durable VSIX companion follows the current proved runtime next session."""
+    if not getattr(sys, "frozen", False) or data_dir is None or url is not None:
+        return None
+    from desktop.runtime import VERSION
+    from desktop.updates import version_tuple
+
+    data_dir = data_dir.resolve()
+    if Path(sys.executable).resolve() != (data_dir / "vscode-runtime" / VERSION / "AgentboardMCP.exe").resolve():
+        return None
+    runtime = json.loads((data_dir / "runtime.json").read_text(encoding="utf-8-sig"))
+    if not isinstance(runtime, dict) or runtime.get("mode") != "vscode":
+        return None
+    if version_tuple(runtime.get("version")) <= version_tuple(VERSION):
+        return None
+    directory = data_dir / "vscode-runtime" / runtime["version"]
+    target = directory / "AgentboardMCP.exe"
+    if not isinstance(runtime.get("base_url"), str):
+        raise ValueError("Некорректный адрес новой MCP-версии DashAI")
+    base_url = validate_url(runtime["base_url"])
+    address = urlsplit(base_url)
+    if (type(runtime.get("schema_version")) is not int or runtime["schema_version"] != 1
+            or not isinstance(runtime.get("data_dir"), str) or Path(runtime["data_dir"]).resolve() != data_dir
+            or not isinstance(runtime.get("executable"), str) or Path(runtime["executable"]).resolve() != target.resolve()
+            or target.resolve() != target
+            or not isinstance(runtime.get("instance_id"), str) or str(UUID(runtime["instance_id"])) != runtime["instance_id"].lower()
+            or type(runtime.get("pid")) is not int or runtime["pid"] <= 0
+            or address.hostname != "127.0.0.1" or address.port is None or not 1 <= address.port <= 65535
+            or not target.is_file() or not (directory / "Agentboard.exe").is_file()
+            or json.loads((directory / "_internal" / "package.json").read_text(encoding="utf-8"))["version"] != runtime["version"]):
+        raise ValueError("Некорректный путь новой MCP-версии DashAI")
+    with build_opener(ProxyHandler({}), NoRedirect()).open(
+            Request(base_url + "/api/health", headers={"Accept": "application/json"}), timeout=5) as response:
+        body = response.read(16385)
+        if len(body) > 16384:
+            raise ValueError("Ответ новой MCP-версии DashAI превышает допустимый размер")
+        health = json.loads(body)
+    if (not isinstance(health, dict) or health.get("status") != "ok"
+            or type(health.get("pid")) is not int
+            or any(health.get(field) != runtime[field] for field in ("instance_id", "pid", "version", "mode"))
+            or type(health.get("mcp_running")) is not bool):
+        raise ValueError("Не подтвержден запущенный экземпляр новой MCP-версии DashAI")
+    # Automatic updates verify the VSIX; personal files retain the local OS-user trust boundary.
+    return target.resolve()
 
 
 def load_token(agent: str, credentials: Path, token_file: Path | None = None) -> tuple[str, str]:
@@ -144,6 +201,7 @@ def task_summary(task: dict) -> dict:
     )
     result = {field: task.get(field) for field in fields}
     result["task_type"] = task.get("task_type", "other")
+    result["subproject_id"] = task.get("subproject_id")
     dependencies = task.get("depends_on", [])
     result.update(depends_on=dependencies[:10], depends_on_count=len(dependencies),
                   depends_on_truncated=len(dependencies) > 10)
@@ -174,6 +232,23 @@ def event_summary(event: dict) -> dict:
         )
     result["snapshots_are_summaries"] = True
     return clipped(result, 500)
+
+
+def subproject_ids(data: dict, selected: str | None, include_descendants: bool) -> set[str] | None:
+    if selected is None:
+        return None
+    items = data.get("subprojects", [])
+    if not any(item["id"] == selected for item in items):
+        raise ToolError("VALIDATION_ERROR: subproject_id must belong to this project; read get_board first")
+    ids = {selected}
+    if include_descendants:
+        # ponytail: scan a local project's tree; add an index only if huge hierarchies make this measurable.
+        while True:
+            added = {item["id"] for item in items if item.get("parent_id") in ids} - ids
+            if not added:
+                break
+            ids.update(added)
+    return ids
 
 
 def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> FastMCP:
@@ -245,16 +320,22 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
     def get_board(project_id: Identifier, limit: Limit = 50,
                   status: Status | None = None, section_id: Identifier | None = None,
                   assignee_id: Identifier | None = None, query: str = "", offset: Annotated[int, Field(ge=0)] = 0,
-                  section_limit: Limit = 20, section_offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
-        """Read bounded section/task summaries. section_id includes that section's description. offset and section_offset page lists."""
+                  section_limit: Limit = 20, section_offset: Annotated[int, Field(ge=0)] = 0,
+                  subproject_id: Identifier | None = None, include_descendants: bool = True,
+                  subproject_limit: Limit = 20, subproject_offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
+        """Read one project board. Optional subproject filter includes descendants by default; page each collection separately. section_id is legacy."""
         data = api("GET", entity_path("projects", project_id))
+        selected = subproject_ids(data, subproject_id, include_descendants)
         tasks = [task for task in data["tasks"] if
                  (status is None or task["status"] == status)
                  and (section_id is None or task["section_id"] == section_id)
                  and (assignee_id is None or task["assignee_id"] == assignee_id)
+                 and (selected is None or task.get("subproject_id") in selected)
                  and (not query or query.casefold() in (task["title"] + " " + task["short_id"]).casefold())]
         end = offset + limit
         section_end = section_offset + section_limit
+        subprojects = data.get("subprojects", [])
+        subproject_end = subproject_offset + subproject_limit
         return clipped({
             "project": data["project"],
             "sections": [{field: section.get(field) for field in ("id", "project_id", "title", "version", "updated_at")}
@@ -262,6 +343,11 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
             "total_sections": len(data["sections"]),
             "next_section_offset": section_end if section_end < len(data["sections"]) else None,
             "section_context": next((section for section in data["sections"] if section["id"] == section_id), None),
+            "subprojects": [{field: item.get(field) for field in ("id", "project_id", "title", "parent_id", "version", "updated_at")}
+                            for item in subprojects[subproject_offset:subproject_end]],
+            "total_subprojects": len(subprojects),
+            "next_subproject_offset": subproject_end if subproject_end < len(subprojects) else None,
+            "subproject_context": next((item for item in subprojects if item["id"] == subproject_id), None),
             "tasks": [task_summary(task) for task in tasks[offset:end]], "total": len(tasks),
             "next_offset": end if end < len(tasks) else None,
             "activity": [event_summary(event) for event in data["activity"][:10]],
@@ -269,14 +355,18 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
 
     @server.tool(annotations=READ)
     def ready_tasks(project_id: Identifier, limit: Limit = 20,
-                    section_id: Identifier | None = None) -> dict[str, Any]:
-        """Find unblocked backlog/in-progress tasks with no live lease. Claim atomically before working."""
+                    section_id: Identifier | None = None, subproject_id: Identifier | None = None,
+                    include_descendants: bool = True) -> dict[str, Any]:
+        """Find unblocked tasks with no live lease, optionally under a subproject and its descendants. Claim atomically before working."""
         data = api("GET", entity_path("projects", project_id))
+        selected = subproject_ids(data, subproject_id, include_descendants)
         by_id = {task["id"]: task for task in data["tasks"]}
         ready = []
         instant = datetime.now(timezone.utc)
         for task in data["tasks"]:
             if task["status"] not in {"backlog", "in_progress"} or (section_id and task["section_id"] != section_id):
+                continue
+            if selected is not None and task.get("subproject_id") not in selected:
                 continue
             if any(by_id.get(dependency, {}).get("status") != "done" for dependency in task["depends_on"]):
                 continue
@@ -291,23 +381,46 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
     @server.tool(annotations=WRITE)
     def create_section(project_id: Identifier, title: Title, reason: Reason, idempotency_key: Key,
                        description: Description = "") -> dict[str, Any]:
-        """Create a project section for one major task/workstream. Individual tasks belong to this section."""
+        """Legacy section compatibility. For nested workstreams use create_subproject; tasks require no section."""
         return clipped(api("POST", entity_path("projects", project_id) + "/sections", {
             "title": title, "description": description, "reason": reason, "idempotency_key": idempotency_key,
         }))
 
+
+    @server.tool(annotations=WRITE)
+    def create_subproject(project_id: Identifier, title: Title, reason: Reason, idempotency_key: Key,
+                          description: Description = "", parent_id: Identifier | None = None) -> dict[str, Any]:
+        """Create a nested workstream in this project; optional parent_id must be a subproject from the same board."""
+        return clipped(api("POST", entity_path("projects", project_id) + "/subprojects", {
+            "title": title, "description": description, "parent_id": parent_id,
+            "reason": reason, "idempotency_key": idempotency_key,
+        }))
+
+    @server.tool(annotations=WRITE)
+    def update_subproject(subproject_id: Identifier, expected_version: Version, changes: SubprojectChanges,
+                          reason: Reason, idempotency_key: Key) -> dict[str, Any]:
+        """Edit a freshly read subproject. parent_id=null moves it to the root; cycles/cross-project links are rejected."""
+        payload = changes.model_dump(exclude_unset=True)
+        if not payload:
+            raise ToolError("VALIDATION_ERROR: changes must contain at least one field")
+        return clipped(api("PATCH", entity_path("subprojects", subproject_id), {
+            "expected_version": expected_version, "changes": payload,
+            "reason": reason, "idempotency_key": idempotency_key,
+        }))
     @server.tool(annotations=WRITE)
     def create_task(project_id: Identifier, title: Title, rationale: Reason,
                     reason: Reason, idempotency_key: Key, section_id: Identifier | None = None, description: Description = "",
                     acceptance_criteria: Description = "", priority: Priority = "medium",
                     task_type: TaskType = "other",
                     assignee_id: Identifier | None = None,
-                    depends_on: Annotated[list[Identifier], Field(max_length=128)] | None = None) -> dict[str, Any]:
-        """Create a project-board task with work type, purpose and criteria. No section is required; section_id supports legacy clients."""
+                    depends_on: Annotated[list[Identifier], Field(max_length=128)] | None = None,
+                    subproject_id: Identifier | None = None) -> dict[str, Any]:
+        """Create a task on the shared project board, optionally assigned to a nested subproject. No section is required."""
         return clipped(api("POST", "/api/tasks", {
             "project_id": project_id, "section_id": section_id, "title": title, "rationale": rationale,
             "description": description, "acceptance_criteria": acceptance_criteria, "priority": priority, "task_type": task_type,
             "assignee_id": assignee_id, "depends_on": depends_on or [],
+            "subproject_id": subproject_id,
             "reason": reason, "idempotency_key": idempotency_key,
         }))
 
@@ -390,12 +503,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--token-file", type=Path)
     parser.add_argument("--url", help="Explicit loopback URL; overrides desktop runtime discovery")
     parser.add_argument("--session-id", default=os.environ.get("AGENTBOARD_SESSION_ID") or f"mcp-{uuid4()}")
-    args = parser.parse_args(argv)
+    original = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(original)
     try:
-        credentials, base_url = connection_options(args.credentials, args.data_dir, args.url)
-        token, actor_id = load_token(args.agent, credentials, args.token_file)
         if not args.session_id or len(args.session_id) > 200 or "\n" in args.session_id or "\r" in args.session_id:
             raise ValueError("Invalid session ID: use 1–200 characters without line breaks")
+        target = forwarding_target(args.data_dir, args.url)
+        if target:
+            from desktop.runtime import external_program_environment
+            external_program_environment()
+            # Inherit native stdin/stdout unchanged: the new companion owns the MCP protocol and its mutex handle.
+            raise SystemExit(subprocess.call([str(target), "--mcp", *original, "--session-id", args.session_id],
+                stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr,
+                shell=False, env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0))
+        credentials, base_url = connection_options(args.credentials, args.data_dir, args.url)
+        token, actor_id = load_token(args.agent, credentials, args.token_file)
         build_server(base_url, token, actor_id, args.session_id).run(transport="stdio")
     except (OSError, ValueError, KeyError) as error:
         print(f"Agentboard connector: {error}", file=sys.stderr)

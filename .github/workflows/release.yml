@@ -44,6 +44,9 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: ./scripts/build-desktop.ps1
+      - name: Build self-contained Windows VS Code extension
+        shell: pwsh
+        run: ./scripts/build-vscode.ps1
       - name: Test shared API and MCP contract
         shell: pwsh
         run: |
@@ -51,7 +54,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
           .venv-build/Scripts/python scripts/frozen_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'Frozen executable smoke failed.' }
-      - name: Sign update manifest
+          .venv-build/Scripts/python scripts/vscode_handoff_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen MCP update handoff failed.' }
+          npm --prefix vscode-extension test
+          if ($LASTEXITCODE -ne 0) { throw 'Extension checks failed.' }
+      - name: Sign desktop and VS Code update manifests
         shell: pwsh
         env:
           AGENTBOARD_UPDATE_PRIVATE_KEY: ${{ secrets.AGENTBOARD_UPDATE_PRIVATE_KEY }}
@@ -61,11 +68,15 @@ jobs:
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$version/$installer"
           .venv-build/Scripts/python scripts/release.py manifest --installer "artifacts/releases/$installer" --version $version --installer-url $url --public-key $env:AGENTBOARD_UPDATE_PUBLIC_KEY --output artifacts/releases/latest.json
           if ($LASTEXITCODE -ne 0) { throw 'Manifest signing failed.' }
-      - name: Publish versioned installer and signed feed
+          $vsix = "Agentboard-VSCode-$version-win32-x64.vsix"
+          $vsixUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$version/$vsix"
+          .venv-build/Scripts/python scripts/release.py vscode-manifest --vsix "artifacts/releases/$vsix" --version $version --vsix-url $vsixUrl --public-key $env:AGENTBOARD_UPDATE_PUBLIC_KEY --output artifacts/releases/vscode-latest.json
+          if ($LASTEXITCODE -ne 0) { throw 'VS Code manifest signing failed.' }
+      - name: Publish versioned installer, VSIX and signed feeds
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          gh release create "v$version" "artifacts/releases/Agentboard-Setup-$version.exe" artifacts/releases/latest.json --target $env:GITHUB_SHA --title "Agentboard $version" --generate-notes
+          gh release create "v$version" "artifacts/releases/Agentboard-Setup-$version.exe" artifacts/releases/latest.json "artifacts/releases/Agentboard-VSCode-$version-win32-x64.vsix" artifacts/releases/vscode-latest.json --target $env:GITHUB_SHA --title "DashAI $version" --generate-notes
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }

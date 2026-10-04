@@ -13,6 +13,7 @@ import time
 import webbrowser
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from uuid import uuid4
 
 import uvicorn
 
@@ -22,7 +23,7 @@ from desktop.updates import backup_before_update, channel_config, check_update, 
 from server.app import create_app
 
 
-def start_server(data_dir: Path, port: int | None = None):
+def start_server(data_dir: Path, port: int | None = None, *, vscode_mode: bool = False):
     """Reserve our own socket; never adopt an existing service's health response."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     for candidate in [port] if port is not None else range(4242, 4263):
@@ -32,9 +33,14 @@ def start_server(data_dir: Path, port: int | None = None):
         except OSError:
             if port is not None or candidate == 4262:
                 sock.close()
-                raise OSError("Не удалось занять локальный порт Agentboard") from None
+                raise OSError("Не удалось занять локальный порт DashAI") from None
     base_url = f"http://127.0.0.1:{sock.getsockname()[1]}"
     app = create_app(data_dir, base_url=base_url)
+    app.state.desktop = {"instance_id": str(uuid4()), "mode": "vscode" if vscode_mode else "desktop",
+                         "version": VERSION, "pid": os.getpid()}
+    app.state.last_activity = time.monotonic()
+    app.state.shutdown_requested = False
+    app.state.mcp_running = mcp_running
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
@@ -48,9 +54,16 @@ def start_server(data_dir: Path, port: int | None = None):
     write_json(data_dir / "runtime.json", {
         "schema_version": 1, "base_url": base_url,
         "executable": companion_command()[0], "data_dir": str(data_dir),
-        "version": VERSION, "pid": os.getpid(),
+        **app.state.desktop,
     })
     return server, thread, base_url
+
+
+def should_stop_vscode(state, instant: float | None = None) -> bool:
+    desktop = getattr(state, "desktop", None)
+    if not desktop or desktop["mode"] != "vscode" or state.mcp_running():
+        return False
+    return state.shutdown_requested or (time.monotonic() if instant is None else instant) - state.last_activity >= 90
 
 
 def open_previous(data_dir: Path) -> None:
@@ -81,7 +94,7 @@ class Launcher:
         except (OSError, ValueError):
             self.settings = {}
         self.channel = channel_config()
-        window.title(f"Agentboard · {VERSION}")
+        window.title(f"DashAI · {VERSION}")
         window.geometry("600x470")
         window.minsize(540, 470)
         window.configure(bg="#10161d")
@@ -95,7 +108,7 @@ class Launcher:
         style.map("TCheckbutton", background=[("active", "#18232d")])
         frame = ttk.Frame(window, padding=24)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="agentboard.", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="DashAI.", style="Title.TLabel").pack(anchor="w")
         ttk.Label(frame, text="Ваши проекты и история на этом компьютере.").pack(anchor="w", pady=(6, 18))
         ttk.Button(frame, text="Открыть доску", command=lambda: webbrowser.open(base_url)).pack(fill="x")
         ttk.Button(frame, text="Подключить Codex и Claude Code к проекту…", command=self.setup_project).pack(fill="x", pady=(8, 16))
@@ -134,7 +147,7 @@ class Launcher:
         from tkinter import messagebox
         if os.name != "nt" or not getattr(sys, "frozen", False):
             self.startup.set(False)
-            messagebox.showinfo("Agentboard", "Автозапуск доступен в установленной Windows-версии.", parent=self.window)
+            messagebox.showinfo("DashAI", "Автозапуск доступен в установленной Windows-версии.", parent=self.window)
             return
         import winreg
         try:
@@ -235,7 +248,7 @@ class Launcher:
             return
         manifest, (installer, signed_manifest), _ = self.pending
         if not self.auto.get() and manual:
-            if not messagebox.askyesno("Обновление", f"Установить версию {manifest['version']} и перезапустить Agentboard?", parent=self.window):
+            if not messagebox.askyesno("Обновление", f"Установить версию {manifest['version']} и перезапустить DashAI?", parent=self.window):
                 self.pending = (manifest, (installer, signed_manifest), False)
                 return
         try:
@@ -258,13 +271,16 @@ class Launcher:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Локальный Agentboard для Windows")
+    parser = argparse.ArgumentParser(description="Локальный DashAI для Windows")
     parser.add_argument("--data-dir", type=Path, default=personal_dir())
     parser.add_argument("--port", type=int)
     parser.add_argument("--headless", action="store_true", help="Run API without launcher or browser (diagnostics)")
+    parser.add_argument("--vscode", action="store_true", help="Run without windows; stop when VS Code is inactive")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--version", action="version", version=VERSION)
     args = parser.parse_args()
+    if args.vscode:
+        args.headless = args.no_browser = True
     data_dir = args.data_dir.resolve()
     if args.port is not None and not 1 <= args.port <= 65535:
         parser.error("Некорректный порт")
@@ -277,9 +293,11 @@ def main():
         return
     server = thread = None
     try:
-        server, thread, base_url = start_server(data_dir, args.port)
+        server, thread, base_url = start_server(data_dir, args.port, vscode_mode=args.vscode)
         if args.headless:
             while thread.is_alive():
+                if args.vscode and should_stop_vscode(server.config.app.state):
+                    server.should_exit = True
                 time.sleep(0.25)
         else:
             import tkinter as tk
@@ -297,7 +315,7 @@ def main():
             from tkinter import messagebox
             window = tk.Tk()
             window.withdraw()
-            messagebox.showerror("Agentboard не запустился", f"{error}\n\nЖурнал: {data_dir / 'logs' / 'desktop.log'}", parent=window)
+            messagebox.showerror("DashAI не запустился", f"{error}\n\nЖурнал: {data_dir / 'logs' / 'desktop.log'}", parent=window)
             window.destroy()
         raise SystemExit(1)
     finally:

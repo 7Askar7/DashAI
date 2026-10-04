@@ -2,6 +2,22 @@
 
 Дата: 04.10.2026, Москва. Локальный адрес: **http://127.0.0.1:4242**. Проверялся работающий UI и общий HTTP/MCP store, а не статический макет.
 
+## DashAI 1.4: подпроекты и VS Code
+
+Название интерфейса, проекта, лаунчера, установщика и EXE properties — DashAI. Совместимые имена MCP, каталогов и файлов сохранены. Создана и визуально проверена PNG-обложка 1672×941; она включена в README и bundled static assets.
+
+Все задачи проекта остаются на одной Kanban-доске с пятью статусами. Native выбор подпроекта доступен при создании/редактировании; вложенность, путь на карточке, фильтр с потомками и управление родителем работают через общий HTTP/MCP domain. SQL schema и исходные legacy-строки не переписываются. Личные данные сохранены через согласованный SQLite backup до restart.
+
+- Production API/MCP/desktop/release suite: **27 PASS**. После native stdio исправления отдельно повторены два затронутых forwarding-теста: **2 PASS**.
+- Browser integration: **11 general + 10 Kanban + 6 nested-subproject групп PASS**. Независимый critic повторил подпроектный smoke и проверил mobile screenshot. Запрет циклов, stale writes, nullable idempotency, две параллельные MCP-сессии, legacy compatibility и атомарный audit проверены.
+- Node extension/security/update contract: **11 PASS**, включая настоящий script bridge в VM с замаскированным `window.parent`, отказ чужому origin, подпись, bounded download, SHA-256 и постоянные MCP paths.
+- Финальный PyInstaller/Inno build и VSIX packaging: **PASS**, без private data и dev-файлов. Frozen smoke: **PASS** — bundled DashAI UI/PNG, HTTP API, nested MCP, task types, legacy tools и конфиги двух клиентов.
+- Настоящий frozen update handoff: **PASS**. Две копии текущего build с явно обозначенной metadata-only новой версией подтвердили native parent→child, MCP stdio, общий SQLite, actor/session и завершение по EOF. Это проверка перехода между путями, а не заявление о создании будущего релиза.
+
+Первый native handoff выявил потерю Windows stdio handles при `CREATE_NO_WINDOW`; исправление явно передает родительские streams. Независимый critic воспроизвел первопричину и проверил исправленный frozen результат. Финальный VSIX содержит точно тот же исправленный companion, что проверенная сборка. Проверка установленных editor bridge и публичных каналов описана отдельно: [VS Code](verification/vscode-actual.md), [backend](verification/subprojects-backend.md), [критика VS Code](reviews/vscode-review.md), [критика подпроектов](reviews/subprojects-review.md).
+
+Локальные installer/VSIX и оба манифеста подписаны тем же Ed25519 ключом, что использовался в прежнем канале. Публичный GitHub CI выпуск проверяется после публикации; локальная сборка не выдается за скачанный Release.
+
 ## Фактически выполненные проверки
 
 | Проверка | Результат | Что она подтверждает |

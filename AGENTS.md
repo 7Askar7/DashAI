@@ -1,4 +1,4 @@
-# Работа над Agentboard
+# Работа над DashAI
 
 Для coding tasks применяй Ponytail full: `.agents/skills/ponytail/SKILL.md`. Перед завершением — отдельный review по `.agents/skills/ponytail-review/SKILL.md`. Upstream: https://github.com/DietrichGebert/ponytail, commit c982cd411abb53323c4baa1baa3c2f020b8d0b08, MIT. Не сокращай validation, data safety, security или accessibility ради размера кода.
 

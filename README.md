@@ -1,8 +1,12 @@
-# Agentboard
+# DashAI
 
-Локальное рабочее пространство для человека, Codex и Claude Code: **проект → карточки задач**. Единая Kanban-доска показывает задачи всего проекта в колонках по статусам. У карточки есть тип: исследование, разработка, тестирование, исправление, документация или другое. Тип виден на карточке, доступен в фильтре и при редактировании. Журнал сохраняет автора, причину и изменения «было → стало». Отдельные записи кодовых правок содержат файлы, diff, commit и результат проверки.
+![Обложка DashAI: параллельная работа на общей доске](public/brand/dashai-cover.png)
+
+Локальное рабочее пространство для человека, Codex и Claude Code: **проект → вложенные подпроекты → карточки задач**. Все задачи проекта видны на одной Kanban-доске по статусам. Подпроект выбирается при создании и редактировании задачи; фильтр включает его вложенные направления. Тип работы выбирается отдельно: исследование, разработка, тестирование, исправление, документация или другое. Журнал сохраняет автора, сессию чата, причину и изменения «было → стало». Отдельные записи кодовых правок содержат файлы, diff, commit и результат проверки.
 
 ## Открыть
+
+**В VS Code:** скачайте файл `Agentboard-VSCode-<версия>-win32-x64.vsix` из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest). В VS Code выберите Extensions → «…» → **Install from VSIX…**, затем нажмите значок DashAI слева → **Открыть доску**. Dashboard откроется во вкладке редактора; Python, Node.js и отдельное приложение устанавливать не требуется. Данные остаются на вашем компьютере. [Установка, подключение агентов и обновления расширения](docs/vscode.md).
 
 Для обычного пользователя Windows 10/11 x64: **[скачать установщик последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest)**. Установка для текущего пользователя, без прав администратора, Python и Node.js. Ярлык запускает локальный dashboard; кнопка лаунчера подключает агентов к выбранной папке проекта. Каждая установка хранит свою базу в `%LOCALAPPDATA%\Agentboard`.
 
@@ -17,7 +21,7 @@
 npm start
 ```
 
-Один процесс отдает production UI и API. Данные сохраняются в `data/agentboard.sqlite3`, стандартные connector credentials — в `data/connector-secrets.json`. Перезапуск не удаляет проекты и историю. Первый запуск на новой базе создает пустое пространство и идентичности клиентов, без выдуманной активности. В текущей базе проект Agent Dashboard создан через MCP; записи отражают реально выполненное исследование и реализацию.
+Один процесс отдает production UI и API. Данные сохраняются в `data/agentboard.sqlite3`, стандартные connector credentials — в `data/connector-secrets.json`. Перезапуск не удаляет проекты и историю. Первый запуск на новой базе создает пустое пространство и идентичности клиентов, без выдуманной активности. В текущей базе проект DashAI создан через MCP; записи отражают реально выполненное исследование и реализацию.
 
 ## Установка с чистого checkout
 
@@ -133,11 +137,14 @@ Dashboard — учет работы внешних агентов. Он не з�
 npm run build
 npm test
 npm run test:ui
+node scripts/python.mjs scripts/kanban_smoke.py
+node scripts/python.mjs scripts/subprojects_smoke.py
+npm --prefix vscode-extension test
 ```
 
 `npm test` проверяет API и настоящие stdio MCP ClientSession на отдельной временной базе. Browser integration использует изолированный backend, реальные формы и SQLite, включая конфликт одновременных правок, evidence gate, code-change metadata, reload, export и mobile reflow. Для UI нужен Chromium: `node scripts/python.mjs -m playwright install chromium`; на этой машине автоматически используется уже установленный Chromium. Можно задать `AGENTBOARD_BROWSER` с абсолютным путем к browser executable.
 
-Независимые отчеты: [engineering](docs/reviews/engineering-review.md), [backend](docs/reviews/backend-review.md), [UX](docs/reviews/ux-review.md). Фактические результаты и screenshots: `artifacts/qa/`. Общий итог: [docs/verification.md](docs/verification.md).
+Независимые отчеты: [engineering](docs/reviews/engineering-review.md), [backend](docs/reviews/backend-review.md), [UX](docs/reviews/ux-review.md), [подпроекты](docs/reviews/subprojects-review.md), [VS Code](docs/reviews/vscode-review.md). Фактические результаты и screenshots: `artifacts/qa/`. Общий итог: [docs/verification.md](docs/verification.md).
 
 ## Экспорт и backup
 

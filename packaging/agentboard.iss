@@ -10,11 +10,11 @@
 
 [Setup]
 AppId={{8318E71F-BB35-4E0E-A18E-D7B4395C596D}
-AppName=Agentboard
+AppName=DashAI
 AppVersion={#AppVersion}
-AppPublisher=Agentboard
+AppPublisher=DashAI
 DefaultDirName={localappdata}\Programs\Agentboard
-DefaultGroupName=Agentboard
+DefaultGroupName=DashAI
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -39,7 +39,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "autostart"; Description: "Запускать Agentboard при входе в Windows"; GroupDescription: "Дополнительные настройки:"; Flags: unchecked
+Name: "autostart"; Description: "Запускать DashAI при входе в Windows"; GroupDescription: "Дополнительные настройки:"; Flags: unchecked
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Agentboard"; ValueData: """{app}\Agentboard.exe"""; Tasks: autostart; Check: ShouldConfigureStartup
@@ -48,8 +48,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Agentboard"; Filename: "{app}\Agentboard.exe"
-Name: "{autodesktop}\Agentboard"; Filename: "{app}\Agentboard.exe"; Tasks: desktopicon
+Name: "{autoprograms}\DashAI"; Filename: "{app}\Agentboard.exe"
+Name: "{autodesktop}\DashAI"; Filename: "{app}\Agentboard.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Agentboard.exe"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser; Check: ShouldOpen
@@ -67,13 +67,13 @@ begin
   begin
     if not StrToVersion(InstalledText, InstalledVersion) then
     begin
-      SuppressibleMsgBox('Не удалось прочитать установленную версию Agentboard. Установка остановлена.', mbError, MB_OK, IDOK);
+      SuppressibleMsgBox('Не удалось прочитать установленную версию DashAI. Установка остановлена.', mbError, MB_OK, IDOK);
       Result := False;
     end
     else if StrToVersion('{#AppVersion}', NewVersion) and
       (ComparePackedVersion(InstalledVersion, NewVersion) > 0) then
     begin
-      SuppressibleMsgBox('Уже установлена более новая версия Agentboard. Понижение версии запрещено.', mbError, MB_OK, IDOK);
+      SuppressibleMsgBox('Уже установлена более новая версия DashAI. Понижение версии запрещено.', mbError, MB_OK, IDOK);
       Result := False;
     end;
   end;

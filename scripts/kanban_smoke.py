@@ -386,7 +386,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-kanban-') as directory:
                 page.reload()
                 expect(card(legacy_task).get_by_text('Другое', exact=True)).to_be_visible()
                 exported = request('/projects/' + legacy_project['id'] + '/export')
-                assert exported['tasks'] == [{**legacy_task, 'task_type': 'other'}]
+                assert exported['tasks'] == [{**legacy_task, 'task_type': 'other', 'subproject_id': None}]
                 assert exported['sections'] == [legacy_section]
                 assert exported['notes'] == [legacy_note]
                 assert [event['id'] for event in exported['events']] == [row[0] for row in old_event_rows]

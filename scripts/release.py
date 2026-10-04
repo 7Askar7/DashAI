@@ -1,4 +1,4 @@
-"""Generate a public release channel and signed installer manifest. Never bundles a private key."""
+"""Generate public release channels and signed installer/VSIX manifests. Never bundles a private key."""
 from __future__ import annotations
 
 import argparse
@@ -46,22 +46,29 @@ def channel(path: Path, url: str | None, public_key: str | None) -> None:
 
 
 def manifest(path: Path, installer: Path, version: str, url: str, private_key: str,
-             public_key: str | None = None) -> None:
+             public_key: str | None = None, *, vsix: bool = False) -> None:
     if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
         raise ValueError("version must have three numeric SemVer components")
     if any(int(part) > 65535 for part in version.split(".")):
         raise ValueError("Windows file-version components must not exceed 65535")
     size = installer.stat().st_size
-    if not 1 <= size <= 512 * 1024 * 1024:
-        raise ValueError("The installer size must be 1 byte..512 MiB")
+    maximum = 128 * 1024 * 1024 if vsix else 512 * 1024 * 1024
+    if not 1 <= size <= maximum:
+        raise ValueError(f"The release artifact size must be 1 byte..{maximum // (1024 * 1024)} MiB")
+    https_url(url)
+    if vsix and url != (f"https://github.com/7Askar7/DashAI/releases/download/v{version}/"
+                        f"Agentboard-VSCode-{version}-win32-x64.vsix"):
+        raise ValueError("VSIX URL must match the versioned win32-x64 asset in 7Askar7/DashAI")
     digest = hashlib.sha256()
     with installer.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
-    payload = json.dumps({"schema_version": 1, "version": version, "installer_url": https_url(url),
-                          "sha256": digest.hexdigest(), "size": size,
-                          "published_at": datetime.now(timezone.utc).isoformat()},
-                         sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    data = {"schema_version": 1, "version": version, "vsix_url" if vsix else "installer_url": url,
+            "sha256": digest.hexdigest(), "size": size,
+            "published_at": datetime.now(timezone.utc).isoformat()}
+    if vsix:
+        data["target"] = "win32-x64"
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     key = Ed25519PrivateKey.from_private_bytes(raw_key(private_key, 32))
     if public_key and key.public_key().public_bytes_raw() != raw_key(public_key, 32):
         raise ValueError("Signing key does not match the installer's public key")
@@ -78,13 +85,15 @@ def main() -> None:
     config.add_argument("--output", type=Path, required=True)
     config.add_argument("--manifest-url")
     config.add_argument("--public-key")
-    signed = commands.add_parser("manifest")
-    signed.add_argument("--output", type=Path, required=True)
-    signed.add_argument("--installer", type=Path, required=True)
-    signed.add_argument("--version", required=True)
-    signed.add_argument("--installer-url", required=True)
-    signed.add_argument("--private-key-file", type=Path)
-    signed.add_argument("--public-key", required=True, help="Public key embedded in the installer; must match signing key")
+    for name, artifact, url in (("manifest", "installer", "installer-url"),
+                                ("vscode-manifest", "vsix", "vsix-url")):
+        signed = commands.add_parser(name)
+        signed.add_argument("--output", type=Path, required=True)
+        signed.add_argument(f"--{artifact}", dest="artifact", type=Path, required=True)
+        signed.add_argument("--version", required=True)
+        signed.add_argument(f"--{url}", dest="artifact_url", required=True)
+        signed.add_argument("--private-key-file", type=Path)
+        signed.add_argument("--public-key", required=True, help="Embedded publisher public key; must match signing key")
     args = parser.parse_args()
     try:
         if args.command == "keygen":
@@ -100,7 +109,8 @@ def main() -> None:
                       os.environ.get("AGENTBOARD_UPDATE_PRIVATE_KEY", ""))
             if not secret:
                 raise ValueError("Use --private-key-file or AGENTBOARD_UPDATE_PRIVATE_KEY")
-            manifest(args.output, args.installer, args.version, args.installer_url, secret, args.public_key)
+            manifest(args.output, args.artifact, args.version, args.artifact_url, secret, args.public_key,
+                     vsix=args.command == "vscode-manifest")
     except (OSError, ValueError) as error:
         parser.exit(1, f"Release: {error}\n")
 

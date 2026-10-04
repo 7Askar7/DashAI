@@ -35,12 +35,43 @@ export type Section = {
   version: number;
   created_at: string;
 };
+export type Subproject = {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  parent_id: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+export function subprojectPath(items: Subproject[], id: string | null | undefined) {
+  const names: string[] = [], seen = new Set<string>();
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    const item = items.find((item) => item.id === id);
+    if (!item) break;
+    names.unshift(item.title);
+    id = item.parent_id;
+  }
+  return names.join(" / ");
+}
+export function inSubproject(items: Subproject[], id: string | null | undefined, parent: string) {
+  const seen = new Set<string>();
+  while (id && !seen.has(id)) {
+    if (id === parent) return true;
+    seen.add(id);
+    id = items.find((item) => item.id === id)?.parent_id;
+  }
+  return false;
+}
 export type Task = {
   id: string;
   short_id: string;
   project_id: string;
   section_id: string;
   task_type: TaskType;
+  subproject_id: string | null;
   title: string;
   description: string;
   rationale: string;
@@ -83,6 +114,7 @@ export type Note = {
 export type Board = {
   project: Project;
   sections: Section[];
+  subprojects: Subproject[];
   tasks: Task[];
   activity: Event[];
 };
@@ -127,6 +159,8 @@ export const actionLabels: Record<string, string> = {
   "project.updated": "изменил проект",
   "section.created": "создал раздел",
   "section.updated": "изменил раздел",
+  "subproject.created": "создал подпроект",
+  "subproject.updated": "изменил подпроект",
   "task.created": "создал задачу",
   "task.updated": "изменил задачу",
   "task.claimed": "взял задачу",
@@ -161,7 +195,7 @@ export async function api<T>(
   } catch {
     throw new ApiError(
       0,
-      "Нет связи с сервером. Проверьте, что Agentboard запущен, и повторите сохранение.",
+      "Нет связи с сервером. Проверьте, что DashAI запущен, и повторите сохранение.",
     );
   }
   if (!response.ok) {

@@ -14,3 +14,5 @@ artifacts/desktop/
 artifacts/releases/
 build/
 *.log
+vscode-extension/node_modules/
+vscode-extension/runtime/

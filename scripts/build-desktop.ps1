@@ -44,7 +44,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Release channel validation failed.' }
 
 $fileVersion = ($version -split '\.') -join ', '
 $versionInfo = @"
-VSVersionInfo(ffi=FixedFileInfo(filevers=($fileVersion, 0), prodvers=($fileVersion, 0), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)), kids=[StringFileInfo([StringTable('040904B0', [StringStruct('CompanyName', 'Agentboard'), StringStruct('FileDescription', 'Agentboard local workspace'), StringStruct('FileVersion', '$version'), StringStruct('ProductName', 'Agentboard'), StringStruct('ProductVersion', '$version')])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])])
+VSVersionInfo(ffi=FixedFileInfo(filevers=($fileVersion, 0), prodvers=($fileVersion, 0), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)), kids=[StringFileInfo([StringTable('040904B0', [StringStruct('CompanyName', 'DashAI'), StringStruct('FileDescription', 'DashAI local workspace'), StringStruct('FileVersion', '$version'), StringStruct('ProductName', 'DashAI'), StringStruct('ProductVersion', '$version')])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])])
 "@
 [System.IO.File]::WriteAllText((Join-Path $generated 'version-info.txt'), $versionInfo, [System.Text.UTF8Encoding]::new($false))
 & $pythonExe scripts/third_party_notices.py

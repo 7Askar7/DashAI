@@ -4,7 +4,9 @@ import {
   priorities,
   statuses,
   taskTypes,
+  subprojectPath,
   type Agent,
+  type Subproject,
   type Status,
   type Task,
 } from "./api";
@@ -13,6 +15,7 @@ import "./kanban.css";
 type Props = {
   tasks: Task[];
   agents: Agent[];
+  subprojects?: Subproject[];
   onOpen: (id: string) => void;
   onMove: (task: Task, status: Status) => void;
 };
@@ -20,6 +23,7 @@ type Props = {
 export default function KanbanBoard({
   tasks,
   agents,
+  subprojects = [],
   onOpen,
   onMove,
 }: Props) {
@@ -182,6 +186,7 @@ export default function KanbanBoard({
                             {task.title}
                           </span>
                           <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
+                          {task.subproject_id && <span className="subproject-tag" title={subprojectPath(subprojects, task.subproject_id)}>{subprojectPath(subprojects, task.subproject_id)}</span>}
                           <span className="kanban-card-meta">
                             <span
                               className={`kanban-agent-mark ${agent?.kind || "unassigned"}`}

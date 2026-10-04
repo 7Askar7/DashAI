@@ -6,6 +6,7 @@ import os
 import secrets
 import sqlite3
 import sys
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -72,9 +73,18 @@ class SectionChanges(StrictModel):
     description: Description | None = None
 
 
+class SubprojectCreate(SectionCreate):
+    parent_id: Identifier | None = None
+
+
+class SubprojectChanges(SectionChanges):
+    parent_id: Identifier | None = None
+
+
 class TaskCreate(Write):
     project_id: Identifier
     section_id: Identifier | None = None
+    subproject_id: Identifier | None = None
     title: Text
     description: Description = ""
     rationale: Reason
@@ -95,6 +105,7 @@ class TaskChanges(StrictModel):
     task_type: TaskType | None = None
     assignee_id: Identifier | None = None
     section_id: Identifier | None = None
+    subproject_id: Identifier | None = None
     depends_on: list[Identifier] | None = Field(default=None, max_length=128)
 
 
@@ -108,6 +119,10 @@ class ProjectPatch(Patch):
 
 class SectionPatch(Patch):
     changes: SectionChanges
+
+
+class SubprojectPatch(Patch):
+    changes: SubprojectChanges
 
 
 class TaskPatch(Patch):
@@ -215,6 +230,7 @@ class Store:
         result = json.loads(value)
         if table == "tasks":
             result.setdefault("task_type", "other")
+            result.setdefault("subproject_id", None)
         return result
 
     @staticmethod
@@ -254,6 +270,10 @@ class Store:
 
     def write(self, actor, scope, model, operation):
         payload = model.model_dump(exclude={"idempotency_key"})
+        if isinstance(model, TaskPatch) and "subproject_id" not in model.changes.model_fields_set:
+            payload["changes"].pop("subproject_id", None)
+        elif isinstance(model, SubprojectPatch):
+            payload["changes"] = model.changes.model_dump(exclude_unset=True)
         with self.transaction() as db:
             if model.idempotency_key:
                 old = db.execute("SELECT request,response FROM idempotency WHERE actor_id=? AND scope=? AND key=?", (actor["id"], scope, model.idempotency_key)).fetchone()
@@ -262,6 +282,7 @@ class Store:
                     if scope == "/api/tasks":
                         previous.setdefault("task_type", "other")
                         previous.setdefault("section_id", None)
+                        previous.setdefault("subproject_id", None)
                     elif isinstance(model, TaskPatch):
                         previous["changes"].setdefault("task_type", None)
                     if encode(previous) != encode(payload):
@@ -269,6 +290,7 @@ class Store:
                     result = json.loads(old["response"])
                     if "section_id" in result and "status" in result:
                         result.setdefault("task_type", "other")
+                        result.setdefault("subproject_id", None)
                     return result
             result = operation(db)
             if model.idempotency_key:
@@ -287,10 +309,31 @@ def check_claim(task, actor):
         raise HTTPException(409, "Задача занята другим агентом. Дождитесь завершения аренды или вмешательства человека")
 
 
+def subproject_entity(db, subproject_id, project_id=None):
+    item = Store.entity(db, "sections", subproject_id)
+    if item.get("kind") != "subproject" or (project_id is not None and item["project_id"] != project_id):
+        raise HTTPException(422, "Подпроект должен быть существующим подпроектом этого проекта")
+    return item
+
+
+def validate_subproject(db, item):
+    visited = {item["id"]}
+    parent_id = item["parent_id"]
+    while parent_id is not None:
+        if parent_id in visited:
+            raise HTTPException(422, "Подпроекты не могут образовывать цикл")
+        visited.add(parent_id)
+        parent_id = subproject_entity(db, parent_id, item["project_id"])["parent_id"]
+
+
 def validate_task(db, task):
     section = Store.entity(db, "sections", task["section_id"])
     if section["project_id"] != task["project_id"]:
         raise HTTPException(422, "Раздел должен принадлежать проекту задачи")
+    if section.get("kind") == "subproject":
+        raise HTTPException(422, "Для принадлежности подпроекту используйте subproject_id")
+    if task.get("subproject_id") is not None:
+        subproject_entity(db, task["subproject_id"], task["project_id"])
     if task["assignee_id"] and not db.execute("SELECT 1 FROM agents WHERE id=?", (task["assignee_id"],)).fetchone():
         raise HTTPException(422, "Исполнитель не найден")
     dependencies = task["depends_on"]
@@ -325,14 +368,14 @@ def changes_dict(model):
     changes = model.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(422, "Укажите хотя бы одно изменяемое поле")
-    if any(value is None for key, value in changes.items() if key != "assignee_id"):
-        raise HTTPException(422, "Пустое значение разрешено только для исполнителя")
+    if any(value is None for key, value in changes.items() if key not in {"assignee_id", "subproject_id", "parent_id"}):
+        raise HTTPException(422, "Пустое значение разрешено только для исполнителя, подпроекта или его родителя")
     return changes
 
 
 def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, base_url: str = "http://127.0.0.1:4242") -> FastAPI:
     store = Store(Path(data_dir), base_url)
-    app = FastAPI(title="Agentboard", version=json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"])
+    app = FastAPI(title="DashAI", version=json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"])
     app.state.store = store
 
     @app.exception_handler(RequestValidationError)
@@ -360,6 +403,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
                 allowed = False
             if not allowed:
                 return JSONResponse(status_code=403, content={"detail": "Этот Origin не имеет доступа к локальному dashboard"})
+        if getattr(app.state, "desktop", None) and request.url.path.startswith("/api/"):
+            app.state.last_activity = time.monotonic()
         return await call_next(request)
 
     def actor(request: Request):
@@ -393,7 +438,20 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok"}
+        desktop = getattr(app.state, "desktop", None)
+        return {"status": "ok", **desktop, "mcp_running": bool(app.state.mcp_running())} if desktop else {"status": "ok"}
+
+    @app.post("/api/desktop/stop")
+    def stop_desktop(request: Request):
+        desktop = getattr(app.state, "desktop", None)
+        if not desktop or desktop["mode"] != "vscode":
+            raise HTTPException(404, "Остановка доступна только для режима VS Code")
+        if request.headers.get("x-agentboard-instance") != desktop["instance_id"]:
+            raise HTTPException(403, "Не совпадает экземпляр DashAI")
+        if app.state.mcp_running():
+            raise HTTPException(409, "Сначала закройте активные MCP-соединения")
+        app.state.shutdown_requested = True
+        return {"status": "stopping"}
 
     @app.get("/api/bootstrap", dependencies=[Depends(authenticated_read)])
     def bootstrap():
@@ -405,7 +463,9 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
     def board(project_id: str):
         with store.connect() as db:
             db.execute("BEGIN")
-            return {"project": store.entity(db, "projects", project_id), "sections": store.entities(db, "sections", "WHERE project_id=?", (project_id,)), "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "activity": store.events(db, "WHERE project_id=?", (project_id,), tail=100)}
+            project = store.entity(db, "projects", project_id)
+            sections = store.entities(db, "sections", "WHERE project_id=?", (project_id,))
+            return {"project": project, "sections": [item for item in sections if item.get("kind") != "subproject"], "subprojects": [item for item in sections if item.get("kind") == "subproject"], "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "activity": store.events(db, "WHERE project_id=?", (project_id,), tail=100)}
 
     @app.post("/api/projects")
     def create_project(body: ProjectCreate, request: Request, who=Depends(actor)):
@@ -421,6 +481,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
         changes = changes_dict(body.changes)
         def operation(db):
             before = store.entity(db, table, entity_id)
+            if entity_type == "section" and before.get("kind") == "subproject":
+                raise HTTPException(422, "Изменяйте подпроект через /api/subprojects")
             check_version(before, body.expected_version)
             after = {**before, **changes, "version": before["version"] + 1, "updated_at": now()}
             db.execute(f"UPDATE {table} SET payload=? WHERE id=?", (encode(after), entity_id))
@@ -448,6 +510,32 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
     def update_section(section_id: str, body: SectionPatch, request: Request, who=Depends(actor)):
         return edit_container("sections", "section", section_id, body, who, session(request))
 
+
+    @app.post("/api/projects/{project_id}/subprojects")
+    def create_subproject(project_id: str, body: SubprojectCreate, request: Request, who=Depends(actor)):
+        session_id = session(request)
+        def operation(db):
+            store.entity(db, "projects", project_id)
+            item = {"id": str(uuid4()), "project_id": project_id, "kind": "subproject", **body.model_dump(exclude={"reason", "idempotency_key"}), "version": 1, "created_at": now(), "updated_at": now()}
+            validate_subproject(db, item)
+            db.execute("INSERT INTO sections VALUES (?,?,?)", (item["id"], project_id, encode(item)))
+            store.record(db, who, body.reason, "subproject", item["id"], "subproject.created", None, item, project_id=project_id, session_id=session_id)
+            return item
+        return store.write(who, f"/api/projects/{project_id}/subprojects", body, operation)
+
+    @app.patch("/api/subprojects/{subproject_id}")
+    def update_subproject(subproject_id: str, body: SubprojectPatch, request: Request, who=Depends(actor)):
+        session_id = session(request)
+        changes = changes_dict(body.changes)
+        def operation(db):
+            before = subproject_entity(db, subproject_id)
+            check_version(before, body.expected_version)
+            after = {**before, **changes, "version": before["version"] + 1, "updated_at": now()}
+            validate_subproject(db, after)
+            db.execute("UPDATE sections SET payload=? WHERE id=?", (encode(after), subproject_id))
+            store.record(db, who, body.reason, "subproject", subproject_id, "subproject.updated", before, after, project_id=before["project_id"], session_id=session_id)
+            return after
+        return store.write(who, f"/api/subprojects/{subproject_id}", body, operation)
     @app.post("/api/tasks")
     def create_task(body: TaskCreate, request: Request, who=Depends(actor)):
         session_id = session(request)
@@ -551,6 +639,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             # A read transaction gives one consistent snapshot while agents write.
             db.execute("BEGIN")
             result = {"schema_version": 1, "exported_at": now(), "project": store.entity(db, "projects", project_id), "sections": store.entities(db, "sections", "WHERE project_id=?", (project_id,)), "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "notes": store.entities(db, "notes", "WHERE project_id=?", (project_id,)), "events": list(reversed(store.events(db, "WHERE project_id=?", (project_id,))))}
+            result["subprojects"] = [item for item in result["sections"] if item.get("kind") == "subproject"]
+            result["sections"] = [item for item in result["sections"] if item.get("kind") != "subproject"]
             return JSONResponse(result, headers={"Content-Disposition": f'attachment; filename="agentboard-{project_id}.json"'})
 
     @app.get("/api/connectors", dependencies=[Depends(authenticated_read)])

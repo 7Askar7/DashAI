@@ -372,17 +372,18 @@ def test_legacy_task_projection_and_cached_retries_preserve_database(tmp_path):
     restarted = create_app(tmp_path)
     with TestClient(restarted, base_url="http://127.0.0.1:8000") as client:
         details = client.get(f"/api/tasks/{original['id']}").json()
-        assert details["task"] == {**updated, "task_type": "other"}
+        assert details["task"] == {**updated, "task_type": "other", "subproject_id": None}
         assert details["notes"] == [note]
         assert all("task_type" not in event["after"] for event in details["events"] if event["entity_type"] == "task")
         board = client.get(f"/api/projects/{project['id']}").json()
-        assert board["tasks"] == [{**updated, "task_type": "other"}] and board["sections"] == [section]
+        assert board["tasks"] == [{**updated, "task_type": "other", "subproject_id": None}] and board["sections"] == [section]
+        assert board["subprojects"] == []
         exported = client.get(f"/api/projects/{project['id']}/export").json()
         assert exported["tasks"] == board["tasks"] and exported["notes"] == [note]
-        assert post(client, "/api/tasks", {**create_body, "idempotency_key": "legacy-create"}) == {**original, "task_type": "other"}
+        assert post(client, "/api/tasks", {**create_body, "idempotency_key": "legacy-create"}) == {**original, "task_type": "other", "subproject_id": None}
         retry = client.patch(f"/api/tasks/{original['id']}", headers=BROWSER, json={"expected_version": 1,
               "changes": {"title": updated["title"]}, "reason": REASON, "idempotency_key": "legacy-patch"})
-        assert retry.status_code == 200 and retry.json() == {**updated, "task_type": "other"}
+        assert retry.status_code == 200 and retry.json() == {**updated, "task_type": "other", "subproject_id": None}
         post(client, "/api/tasks", {**create_body, "task_type": "research", "idempotency_key": "legacy-create"}, expected=409)
         assert snapshot() == before and store.credentials_file.read_bytes() == credentials_before
         changed = patch(client, details["task"], {"task_type": "bugfix"})
@@ -390,3 +391,123 @@ def test_legacy_task_projection_and_cached_retries_preserve_database(tmp_path):
         assert client.get(f"/api/tasks/{original['id']}").json()["notes"] == [note]
         with store.connect() as db:
             assert [tuple(row) for row in db.execute("SELECT * FROM events WHERE id<=3 ORDER BY id")] == before["events"]
+
+
+def test_nested_subprojects_task_assignment_and_audit(workspace):
+    app, client, agents = workspace
+    project, legacy = project_and_section(client)
+    root_url = f"/api/projects/{project['id']}/subprojects"
+    args = {"title": "Сайт", "description": "Общий интерфейс", "idempotency_key": "website"}
+    website = post(client, root_url, args, agents["codex"])
+    assert website["parent_id"] is None and website["kind"] == "subproject"
+    assert post(client, root_url, args, agents["codex"]) == website
+    post(client, root_url, {**args, "title": "Другое"}, agents["codex"], expected=409)
+    payments = post(client, root_url, {"title": "Оплата", "parent_id": website["id"]}, agents["claude"])
+    checks = post(client, root_url, {"title": "Тестирование", "parent_id": payments["id"]}, agents["codex"])
+    item = post(client, "/api/tasks", {"project_id": project["id"], "subproject_id": checks["id"],
+                "title": "Проверить оплату", "task_type": "testing", "rationale": REASON}, agents["claude"])
+    ungrouped = task(client, project, legacy)
+    assert ungrouped["subproject_id"] is None and item["section_id"] != checks["id"]
+    moved = patch(client, item, {"subproject_id": payments["id"]})
+    preserved = patch(client, moved, {"status": "blocked"})
+    assert preserved["subproject_id"] == payments["id"] and preserved["task_type"] == "testing"
+    cleared = patch(client, preserved, {"subproject_id": None})
+    assert cleared["subproject_id"] is None and cleared["section_id"] == item["section_id"]
+    board = client.get(f"/api/projects/{project['id']}").json()
+    assert [group["id"] for group in board["subprojects"]] == [website["id"], payments["id"], checks["id"]]
+    assert set(task["id"] for task in board["tasks"]) == {item["id"], ungrouped["id"]}
+    assert all(group.get("kind") != "subproject" for group in board["sections"])
+    before = client.get("/api/history?limit=500").json()["events"]
+    response = client.patch(f"/api/subprojects/{checks['id']}", headers=BROWSER, json={
+        "expected_version": checks["version"], "changes": {"title": "Тесты оплаты", "parent_id": None},
+        "reason": REASON, "idempotency_key": "move-root"})
+    assert response.status_code == 200, response.text
+    changed = response.json()
+    assert changed["parent_id"] is None and changed["version"] == 2
+    retry = client.patch(f"/api/subprojects/{checks['id']}", headers=BROWSER, json={
+        "expected_version": checks["version"], "changes": {"title": "Тесты оплаты", "parent_id": None},
+        "reason": REASON, "idempotency_key": "move-root"})
+    assert retry.json() == changed
+    changed_retry = client.patch(f"/api/subprojects/{checks['id']}", headers=BROWSER, json={
+        "expected_version": checks["version"], "changes": {"title": "Тесты оплаты"},
+        "reason": REASON, "idempotency_key": "move-root"})
+    assert changed_retry.status_code == 409
+    events = client.get("/api/history?limit=500").json()["events"]
+    assert len(events) == len(before) + 1
+    assert events[-1]["action"] == "subproject.updated" and events[-1]["before"] == checks and events[-1]["after"] == changed
+    created_event = next(event for event in events if event["entity_id"] == payments["id"])
+    assert created_event["actor_id"] == "claude" and created_event["session_id"] == "test-claude"
+    title_only = {"expected_version": payments["version"], "changes": {"title": "Платежи"},
+                  "reason": REASON, "idempotency_key": "preserve-parent"}
+    renamed = client.patch(f"/api/subprojects/{payments['id']}", headers=BROWSER, json=title_only)
+    assert renamed.status_code == 200 and renamed.json()["parent_id"] == website["id"]
+    assert client.patch(f"/api/subprojects/{payments['id']}", headers=BROWSER, json=title_only).json() == renamed.json()
+    assert client.patch(f"/api/subprojects/{payments['id']}", headers=BROWSER, json={**title_only,
+        "changes": {"title": "Платежи", "parent_id": None}}).status_code == 409
+    assigned = patch(client, cleared, {"subproject_id": payments["id"]})
+    task_title_only = {"expected_version": assigned["version"], "changes": {"title": "Проверить платежи"},
+                       "reason": REASON, "idempotency_key": "preserve-task-group"}
+    rename_task = client.patch(f"/api/tasks/{assigned['id']}", headers=BROWSER, json=task_title_only)
+    assert rename_task.status_code == 200 and rename_task.json()["subproject_id"] == payments["id"]
+    assert client.patch(f"/api/tasks/{assigned['id']}", headers=BROWSER, json=task_title_only).json() == rename_task.json()
+    assert client.patch(f"/api/tasks/{assigned['id']}", headers=BROWSER, json={**task_title_only,
+        "changes": {"title": "Проверить платежи", "subproject_id": None}}).status_code == 409
+    board = client.get(f"/api/projects/{project['id']}").json()
+    exported = client.get(f"/api/projects/{project['id']}/export").json()
+    assert exported["subprojects"][-1] == changed and exported["tasks"] == board["tasks"]
+    with TestClient(create_app(app.state.store.data_dir), base_url="http://127.0.0.1:8000") as reopened:
+        assert reopened.get(f"/api/projects/{project['id']}").json()["subprojects"] == exported["subprojects"]
+
+
+def test_subproject_validation_rollbacks_and_concurrent_parent_changes(workspace):
+    app, client, _agents = workspace
+    project, legacy = project_and_section(client)
+    other, _ = project_and_section(client)
+    root_url = f"/api/projects/{project['id']}/subprojects"
+    root = post(client, root_url, {"title": "Сайт"})
+    child = post(client, root_url, {"title": "Оплата", "parent_id": root["id"]})
+    foreign = post(client, f"/api/projects/{other['id']}/subprojects", {"title": "Чужой"})
+    def snapshot():
+        with app.state.store.connect() as db:
+            return {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+                    for table in ["projects", "sections", "tasks", "events", "idempotency"]}
+    before = snapshot()
+    for parent_id, expected in [(root["id"], 422), (child["id"], 422), (foreign["id"], 422), (legacy["id"], 422), ("missing", 404)]:
+        response = client.patch(f"/api/subprojects/{root['id']}", headers=BROWSER, json={
+            "expected_version": root["version"], "changes": {"parent_id": parent_id},
+            "reason": REASON, "idempotency_key": "invalid-parent-" + parent_id})
+        assert response.status_code == expected, response.text
+    for changes in [{}, {"title": None}, {"version": 999}]:
+        assert client.patch(f"/api/subprojects/{root['id']}", headers=BROWSER, json={
+            "expected_version": 1, "changes": changes, "reason": REASON}).status_code == 422
+    post(client, root_url, {"title": "Invalid", "parent_id": foreign["id"], "idempotency_key": "invalid-create"}, expected=422)
+    post(client, "/api/tasks", {"project_id": other["id"], "subproject_id": root["id"],
+              "title": "Cross-project", "rationale": REASON, "idempotency_key": "invalid-task"}, expected=422)
+    post(client, "/api/tasks", {"project_id": project["id"], "subproject_id": legacy["id"],
+              "title": "Legacy section is not a subproject", "rationale": REASON}, expected=422)
+    post(client, "/api/tasks", {"project_id": project["id"], "section_id": root["id"],
+              "title": "Subproject is not a legacy section", "rationale": REASON}, expected=422)
+    assert client.patch(f"/api/sections/{root['id']}", headers=BROWSER, json={
+        "expected_version": 1, "changes": {"title": "Wrong route"}, "reason": REASON}).status_code == 422
+    assert snapshot() == before
+    existing = task(client, project, legacy)
+    patch(client, existing, {"section_id": root["id"]}, expected=422)
+    patch(client, existing, {"subproject_id": foreign["id"]}, expected=422)
+    # Two independent parent updates must serialize: allowing both would create a cycle.
+    left = post(client, root_url, {"title": "A"})
+    right = post(client, root_url, {"title": "B"})
+    barrier = Barrier(2)
+    def link(pair):
+        item, parent = pair
+        barrier.wait()
+        return client.patch(f"/api/subprojects/{item['id']}", headers=BROWSER, json={
+            "expected_version": 1, "changes": {"parent_id": parent["id"]}, "reason": REASON})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(link, [(left, right), (right, left)]))
+    assert sorted(result.status_code for result in results) == [200, 422]
+    winner = next(result.json() for result in results if result.status_code == 200)
+    stale = client.patch(f"/api/subprojects/{winner['id']}", headers=BROWSER, json={
+        "expected_version": 1, "changes": {"title": "Stale edit"}, "reason": REASON})
+    assert stale.status_code == 409
+    with app.state.store.connect() as db:
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []

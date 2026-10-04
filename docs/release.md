@@ -1,10 +1,14 @@
 # Установка на компьютер и выпуск обновлений
 
-Agentboard устанавливается как приложение Windows 10/11 x64. Пользователю достаточно скачать установщик из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest) и запустить его: Python, Node.js и checkout ему не нужны. Установка не запрашивает права администратора. Ярлык «Agentboard» открывает приложение и локальную доску в браузере.
+Начиная с 1.4.0 тот же Release содержит самостоятельное расширение VS Code для Windows x64. Его можно установить через **Install from VSIX…** и открыть dashboard во вкладке редактора. Отдельный подписанный канал `vscode-latest.json` обновляет VSIX; настольный канал `latest.json` продолжает обновлять EXE. [Инструкция расширения и сборки](vscode.md).
+
+DashAI устанавливается как приложение Windows 10/11 x64. Пользователю достаточно скачать установщик из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest) и запустить его: Python, Node.js и checkout ему не нужны. Установка не запрашивает права администратора. Ярлык «DashAI» открывает приложение и локальную доску в браузере.
 
 В версии 1.3.0 карточки создаются прямо в проекте, без пользовательских разделов. Поле «Тип задачи» предлагает исследование, разработку, тестирование, исправление, документацию и другое; тип виден на карточке, доступен в фильтре и при редактировании. Общая доска содержит пять колонок по статусам; список остается доступен. Карточку можно перетащить в другую колонку или переместить через поле «Переместить» с выбором статуса, в том числе с клавиатуры. Перед сохранением нужна причина; история фиксирует автора и смену статуса или типа. Обновление сохраняет существующие проекты, карточки, их идентификаторы и историю без переноса данных в новую базу.
 
 Программа устанавливается в `%LOCALAPPDATA%\Programs\Agentboard`. Каждый пользователь Windows хранит свое пространство в `%LOCALAPPDATA%\Agentboard`: база, история, credentials, резервные копии и логи. Установщик не содержит ни проектов разработчика, ни его токенов. Обновление заменяет программу, сохраняя личные данные. Удаление приложения также сохраняет эту папку; стереть личные данные можно отдельно после резервной копии.
+
+Начиная с 1.4 продукт называется DashAI. Прежние имена каталогов, EXE, VSIX, MCP `agentboard` и ключи настроек сохранены для совместимости установок и коннекторов; база не переносится в новую папку при переименовании.
 
 Ярлык на рабочем столе и запуск при входе в Windows — отдельные необязательные пункты установщика. MCP работает через консольный `AgentboardMCP.exe`; он использует API того же установленного приложения и той же личной базы. Конфигурацию Codex/Claude Code нужно создать для выбранного репозитория через приложение. Наличие программы не заменяет установленный клиент агента или его обычное разрешение MCP.
 
@@ -42,13 +46,13 @@ Helper использует штатный Windows PowerShell 5.1 и его си
 
 ```powershell
 git add .
-git commit -m "Release 1.3.0"
+git commit -m "Release 1.4.0"
 git push origin main
-git tag v1.3.0
-git push origin v1.3.0
+git tag v1.4.0
+git push origin v1.4.0
 ```
 
-Workflow `.github/workflows/release.yml` на Windows собирает production UI, два самостоятельных EXE и Inno Setup installer, запускает тесты, подписывает манифест и публикует Release с `Agentboard-Setup-1.3.0.exe` и `latest.json`. Private key доступен только шагу подписи. В installed bundle попадают публичный ключ, адрес канала и лицензии зависимостей.
+Workflow `.github/workflows/release.yml` на Windows собирает production UI, два самостоятельных EXE, Inno Setup installer и самостоятельный VSIX, запускает тесты, подписывает манифесты и публикует Release с `Agentboard-Setup-1.4.0.exe`, `latest.json`, `Agentboard-VSCode-1.4.0-win32-x64.vsix` и `vscode-latest.json`. Private key доступен только шагу подписи. В пакеты попадают публичный ключ, адреса каналов и лицензии зависимостей.
 
 Выпуск можно запустить также без терминала: GitHub → Actions → **Windows release** → **Run workflow** для выбранной ветки. Workflow берет версию из `package.json`, создает соответствующий tag и Release для того же commit, который был собран. Уже существующий Release с этой версией не перезаписывается: для следующего выпуска увеличьте версию.
 
@@ -66,14 +70,14 @@ Tag должен совпадать с `package.json`; prerelease suffix в эт
 ./scripts/build-desktop.ps1 -ManifestUrl 'https://github.com/7Askar7/DashAI/releases/latest/download/latest.json'
 ```
 
-Результат для версии 1.3.0: `artifacts/releases/Agentboard-Setup-1.3.0.exe`; распакованное приложение: `artifacts/desktop/Agentboard/`. Build читает только явно перечисленные ресурсы, а не копирует весь checkout. `data/`, `.mcp.json`, `.codex/config.toml`, Git и development environment не упаковываются. Если compiler установлен нестандартно, передать `-InnoCompiler 'C:/path/to/ISCC.exe'`.
+Результат для версии 1.4.0: `artifacts/releases/Agentboard-Setup-1.4.0.exe`; распакованное приложение: `artifacts/desktop/Agentboard/`. Build читает только явно перечисленные ресурсы, а не копирует весь checkout. `data/`, `.mcp.json`, `.codex/config.toml`, Git и development environment не упаковываются. Если compiler установлен нестандартно, передать `-InnoCompiler 'C:/path/to/ISCC.exe'`.
 
 Если `python` в PATH указывает на старую среду, при первой сборке передать `-PythonExecutable 'C:/Python314/python.exe'`. Версия Python runtime включается в EXE; старые Anaconda environments не используются для распространяемой сборки.
 
 Для собственного хостинга подписать уже собранный установщик:
 
 ```powershell
-.venv-build/Scripts/python scripts/release.py manifest --installer artifacts/releases/Agentboard-Setup-1.3.0.exe --version 1.3.0 --installer-url 'https://example.org/releases/Agentboard-Setup-1.3.0.exe' --private-key-file 'C:/secure/agentboard-update-private.txt' --public-key 'BASE64_PUBLIC_KEY' --output artifacts/releases/latest.json
+.venv-build/Scripts/python scripts/release.py manifest --installer artifacts/releases/Agentboard-Setup-1.4.0.exe --version 1.4.0 --installer-url 'https://example.org/releases/Agentboard-Setup-1.4.0.exe' --private-key-file 'C:/secure/agentboard-update-private.txt' --public-key 'BASE64_PUBLIC_KEY' --output artifacts/releases/latest.json
 ```
 
 ## Проверить перед распространением

@@ -1,4 +1,4 @@
-# Agent Dashboard — контракт реализации
+# DashAI — контракт реализации
 
 Дата решения: 03.10.2026. Исследования: `research/01-products.md`, `research/02-agent-needs.md`, `research/03-ux-ui.md`. Реализация начинается после завершения этих исследований.
 
@@ -78,3 +78,13 @@ Drop или выбор нового статуса открывает подтв
 UI create/edit предлагает native select «Тип задачи»: Исследование, Разработка, Тестирование, Исправление, Документация, Другое. Новая UI-карточка имеет default development; HTTP/MCP default other обеспечивает совместимость старых клиентов. Смена типа фиксируется обычным task.updated с причиной, before/after и version. Status-only PATCH сохраняет тип. Export, get_task, get_board и ready_tasks возвращают тип.
 
 SQLite schema/FKs остаются прежними. Старые payload без task_type читаются как other; при чтении исходные строки задач, notes, events и cached idempotency не переписываются. Старый тип не угадывается по названию раздела. При новом create_task без section_id служебная группа project-board:<project_id> создается в той же транзакции, что task и audit; UI не требует настройки разделов. Ее truthful section.created с is_default показывается как «подготовил доску проекта». Прежние section API/MCP, IDs и export сохраняются для старых клиентов. Старые cached create/patch requests сравниваются с учетом default нового поля, а ответы получают read-time fallback; повтор успешного запроса до обновления не создает вторую задачу или audit.
+
+## Подпроекты 1.4
+
+У одного проекта остается одна доска по статусам. Необязательный `task.subproject_id` обозначает направление работы параллельных чатов; тип задачи и статус остаются отдельными полями. Подпроект имеет `id`, `project_id`, `title`, `description`, nullable `parent_id`, `version`, `created_at`, `updated_at`. Родитель и задача могут ссылаться только на подпроект того же проекта; циклы запрещены, включая конкурентное переподчинение.
+
+`POST /api/projects/{id}/subprojects` принимает `{title, description?, parent_id?, reason, idempotency_key?}`; `PATCH /api/subprojects/{id}` — `{expected_version, changes: {title?, description?, parent_id?}, reason, idempotency_key?}`. Явный `parent_id: null` перемещает подпроект в корень, `subproject_id: null` отвязывает задачу; пропущенное поле сохраняется. Idempotency различает пропущенное поле и явное очищение. Изменения и `subproject.created/updated` записываются одной транзакцией.
+
+Без миграции SQLite: подпроекты хранятся в существующей `sections` с `kind: "subproject"`; legacy-разделы не превращаются в подпроекты. Board/export возвращают отдельные `sections` и `subprojects`, старые задачи читаются с `subproject_id: null`, исходные строки и история не переписываются. `section_id` поддерживает прежние разделы и служебную группу; для новой принадлежности используется только `subproject_id`.
+
+MCP `create_subproject/update_subproject` обращаются к общему HTTP API. `get_board/ready_tasks` поддерживают `subproject_id` и `include_descendants` (по умолчанию true), `get_board` отдельно ограничивает и страницы подпроектов. Источник события — авторизованный агент и `session_id`; наличие группы не создает и не запускает отдельного агента.

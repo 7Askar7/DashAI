@@ -1,0 +1,11 @@
+**
+!package.json
+!extension.cjs
+!updates.cjs
+!update-channel.json
+!assets/
+!assets/**
+!runtime/
+!runtime/**
+!README.md
+!LICENSE

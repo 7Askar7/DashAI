@@ -44,6 +44,8 @@ import {
   taskTypes,
   noteLabels,
   actionLabels,
+  subprojectPath,
+  inSubproject,
   type Agent,
   type Board,
   type Bootstrap,
@@ -51,14 +53,17 @@ import {
   type Detail,
   type Event,
   type Project,
+  type Subproject,
   type Task,
   type Status,
 } from "./api";
 import KanbanBoard from "./KanbanBoard";
+import { insideVSCode, hostRequest, writeClipboard } from "./host";
 
 type View = "overview" | "board" | "project_history" | "history" | "connectors";
 type Modal =
   | { kind: "project"; project?: Project }
+  | { kind: "subproject"; subproject?: Subproject; parent_id?: string }
   | { kind: "task" };
 const emptyBootstrap: Bootstrap = { projects: [], agents: [], activity: [] };
 const text = (data: FormData, key: string) =>
@@ -67,7 +72,7 @@ const agentName = (agents: Agent[], id: string | null) =>
   agents.find((a) => a.id === id)?.name || "Не назначен";
 const kindLabel = (kind: string) =>
   kind === "human" ? "Человек" : kind === "claude" ? "Claude Code" : "Codex";
-const fieldLabels:Record<string,string> = {title:'Название',description:'Описание',rationale:'Зачем',acceptance_criteria:'Критерии готовности',status:'Статус',priority:'Приоритет',task_type:'Тип задачи',assignee_id:'Исполнитель',section_id:'Раздел',depends_on:'Зависимости',claim_owner_id:'Владелец'};
+const fieldLabels:Record<string,string> = {title:'Название',description:'Описание',rationale:'Зачем',acceptance_criteria:'Критерии готовности',status:'Статус',priority:'Приоритет',task_type:'Тип задачи',subproject_id:'Подпроект',parent_id:'Родительский подпроект',assignee_id:'Исполнитель',section_id:'Раздел',depends_on:'Зависимости',claim_owner_id:'Владелец'};
 
 function Avatar({ agent, small = false }: { agent?: Agent; small?: boolean }) {
   return (
@@ -312,12 +317,15 @@ function EntityForm({
     [error, setError] = useState("");
   const key = useRef(crypto.randomUUID());
   const isProject = modal.kind === "project";
-  const item = isProject ? modal.project : undefined;
+  const isSubproject = modal.kind === "subproject";
+  const item = modal.kind === "project" ? modal.project : modal.kind === "subproject" ? modal.subproject : undefined;
+  const subprojects = board?.subprojects || [];
+  const options = [...subprojects].sort((a, b) => subprojectPath(subprojects, a.id).localeCompare(subprojectPath(subprojects, b.id), "ru"));
   const title = isProject
     ? item
       ? "Изменить проект"
       : "Новый проект"
-    : "Новая задача";
+    : isSubproject ? item ? "Изменить подпроект" : "Новый подпроект" : "Новая задача";
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
@@ -344,12 +352,22 @@ function EntityForm({
           },
         );
         await onSaved(result.id);
+      } else if (modal.kind === "subproject") {
+        const changes = { title: text(d, "title"), description: text(d, "description"), parent_id: text(d, "parent_id") || null };
+        await api<Subproject>(modal.subproject ? `/subprojects/${modal.subproject.id}` : `/projects/${board!.project.id}/subprojects`, {
+          method: modal.subproject ? "PATCH" : "POST",
+          body: JSON.stringify(modal.subproject
+            ? { expected_version: modal.subproject.version, changes, reason, idempotency_key: key.current }
+            : { ...changes, reason, idempotency_key: key.current }),
+        });
+        await onSaved();
       } else {
         const task = await api<Task>("/tasks", {
           method: "POST",
           body: JSON.stringify({
             project_id: board!.project.id,
             task_type: text(d, "task_type"),
+            subproject_id: text(d, "subproject_id") || null,
             title: text(d, "title"),
             description: text(d, "description"),
             rationale: text(d, "rationale"),
@@ -365,7 +383,9 @@ function EntityForm({
       }
       onClose();
     } catch (e) {
-      setError((e as Error).message);
+      setError((e as Error).message + (e instanceof ApiError && e.status === 409 && item
+        ? " Сохранение не выполнено. Скопируйте нужные правки, закройте форму, обновите доску и откройте объект повторно, чтобы получить актуальную версию."
+        : ""));
     } finally {
       setBusy(false);
     }
@@ -376,7 +396,8 @@ function EntityForm({
         <p className="form-intro">
           {isProject
             ? "Отдельная доска, контекст и история для одного проекта."
-            : "Выберите тип работы, опишите результат и зачем он нужен. Агент получит этот контекст вместе с задачей."}
+            : isSubproject ? "Направление работы внутри проекта. Его задачи останутся на общей доске; можно выбрать родительский подпроект."
+            : "Выберите подпроект и тип работы, опишите результат и зачем он нужен. Агент получит этот контекст вместе с задачей."}
         </p>
         {isProject ? (
           <>
@@ -411,9 +432,22 @@ function EntityForm({
               <option value="#f4c580">Песочный</option>
             </Select>
           </>
+        ) : modal.kind === "subproject" ? (
+          <>
+            <Field label="Название подпроекта" name="title" required defaultValue={modal.subproject?.title} />
+            <Field label="Цель подпроекта" name="description" area defaultValue={modal.subproject?.description} />
+            <Select label="Родительский подпроект" name="parent_id" defaultValue={modal.subproject?.parent_id || modal.parent_id || ""}>
+              <option value="">В корне проекта</option>
+              {options.filter((s) => !modal.subproject || !inSubproject(subprojects, s.id, modal.subproject.id)).map((s) => <option key={s.id} value={s.id}>{subprojectPath(subprojects, s.id)}</option>)}
+            </Select>
+          </>
         ) : (
           <>
             <Field label="Название задачи" name="title" required />
+            <Select label="Подпроект" name="subproject_id">
+              <option value="">Весь проект · без подпроекта</option>
+              {options.map((s) => <option key={s.id} value={s.id}>{subprojectPath(subprojects, s.id)}</option>)}
+            </Select>
             <Select
               label="Тип задачи"
               name="task_type"
@@ -477,7 +511,7 @@ function EntityForm({
               ? "Уточнение контекста проекта"
               : isProject
                 ? "Создание нового проекта"
-                : "Добавление задачи в план проекта"
+                : isSubproject ? "Создание направления работы в проекте" : "Добавление задачи в план проекта"
           }
         />
         {error && <ErrorBox message={error} />}
@@ -585,6 +619,8 @@ function Events({
                                 status: "Статус",
                                 priority: "Приоритет",
                                 task_type: "Тип задачи",
+                                subproject_id: "Подпроект",
+                                parent_id: "Родительский подпроект",
                                 assignee_id: "Исполнитель",
                                 section_id: "Раздел",
                                 body: "Запись",
@@ -706,6 +742,7 @@ function TaskDrawer({
         priority: text(d, "priority"),
         assignee_id: text(d, "assignee_id") || null,
         task_type: text(d, "task_type"),
+        subproject_id: text(d, "subproject_id") || null,
         depends_on: d.getAll("depends_on"),
       };
       const changes = Object.fromEntries(
@@ -785,7 +822,7 @@ function TaskDrawer({
           <FolderKanban size={13} />
           <span>{board.project.name}</span>
           <ChevronRight size={12} />
-          <span>{taskTypes[task.task_type || "other"]}</span>
+          <span>{subprojectPath(board.subprojects || [], task.subproject_id) || "Весь проект"}</span>
         </div>
         <div className="task-detail-heading">
           <h3>{task.title}</h3>
@@ -883,6 +920,10 @@ function TaskDrawer({
                 ))}
               </Select>
             </div>
+            <Select label="Подпроект" name="subproject_id" defaultValue={task.subproject_id || ""}>
+              <option value="">Весь проект · без подпроекта</option>
+              {[...(board.subprojects || [])].sort((a, b) => subprojectPath(board.subprojects || [], a.id).localeCompare(subprojectPath(board.subprojects || [], b.id), "ru")).map((s) => <option key={s.id} value={s.id}>{subprojectPath(board.subprojects || [], s.id)}</option>)}
+            </Select>
             <Field
               label="Что нужно сделать"
               name="description"
@@ -1119,7 +1160,7 @@ function ConnectorView({
   }, []);
   async function copy(value: string, id: string) {
     try {
-      await navigator.clipboard.writeText(value);
+      await writeClipboard(value);
       setCopied(id);
       notify("Конфигурация скопирована");
     } catch {
@@ -1419,6 +1460,7 @@ export default function App() {
     [mobileMenu, setMobileMenu] = useState(false);
   const [query, setQuery] = useState(""),
     [taskTypeFilter, setTaskTypeFilter] = useState(""),
+    [subprojectFilter, setSubprojectFilter] = useState(""),
     [agentFilter, setAgentFilter] = useState(""),
     [statusFilter, setStatusFilter] = useState(""),
     [priorityFilter, setPriorityFilter] = useState(""),
@@ -1493,6 +1535,7 @@ export default function App() {
     }
   }
   useEffect(() => {
+    setSubprojectFilter("");
     if (projectId) localStorage.setItem("agentboard.project", projectId);
     refresh(projectId);
     const interval = setInterval(() => {
@@ -1637,6 +1680,10 @@ export default function App() {
   async function exportProject() {
     if (!board) return;
     try {
+      if (insideVSCode) {
+        if (await hostRequest("export", { project_id: board.project.id })) notify("Проект и полная история экспортированы");
+        return;
+      }
       const snapshot = await api<Record<string, unknown>>(
         `/projects/${board.project.id}/export`,
       );
@@ -1647,7 +1694,7 @@ export default function App() {
       );
       const a = document.createElement("a");
       a.href = url;
-      a.download = `agentboard-${board.project.id}.json`;
+      a.download = `dashai-${board.project.id}.json`;
       a.click();
       URL.revokeObjectURL(url);
       notify("Проект и полная история экспортированы");
@@ -1658,6 +1705,7 @@ export default function App() {
   function resetFilters() {
     setQuery("");
     setTaskTypeFilter("");
+    setSubprojectFilter("");
     setAgentFilter("");
     setStatusFilter("");
     setPriorityFilter("");
@@ -1665,6 +1713,7 @@ export default function App() {
   const filters = !!(
     query ||
     taskTypeFilter ||
+    subprojectFilter ||
     agentFilter ||
     (listView && statusFilter) ||
     priorityFilter
@@ -1673,6 +1722,7 @@ export default function App() {
     board?.tasks.filter(
       (t) =>
         (!taskTypeFilter || (t.task_type || "other") === taskTypeFilter) &&
+        (!subprojectFilter || (subprojectFilter === "unassigned" ? !t.subproject_id : inSubproject(board?.subprojects || [], t.subproject_id, subprojectFilter))) &&
         (!agentFilter ||
           (agentFilter === "unassigned"
             ? !t.assignee_id
@@ -1680,7 +1730,7 @@ export default function App() {
         (!listView || !statusFilter || t.status === statusFilter) &&
         (!priorityFilter || t.priority === priorityFilter) &&
         (!query ||
-          `${t.short_id} ${t.title} ${t.description} ${t.rationale} ${taskTypes[t.task_type || "other"]}`
+          `${t.short_id} ${t.title} ${t.description} ${t.rationale} ${taskTypes[t.task_type || "other"]} ${subprojectPath(board?.subprojects || [], t.subproject_id)}`
             .toLocaleLowerCase("ru")
             .includes(query.toLocaleLowerCase("ru"))),
     ) || [];
@@ -1703,11 +1753,11 @@ export default function App() {
             <Blocks size={22} />
           </span>
           <span>
-            agentboard<span className="brand-period">.</span>
+            DashAI<span className="brand-period">.</span>
           </span>
         </button>
         <div className="workspace-switch">
-          <span className="workspace-icon">A</span>
+          <span className="workspace-icon">D</span>
           <div>
             <strong>Мое пространство</strong>
             <span>Человек + агенты</span>
@@ -2025,6 +2075,7 @@ export default function App() {
                   )}
                 </div>
                 <div className="project-actions">
+                  <button className="button secondary" onClick={() => setModal({ kind: "subproject" })}><GitBranch size={15} />Подпроект</button>
                   <button
                     className="button secondary"
                     onClick={exportProject}
@@ -2109,6 +2160,15 @@ export default function App() {
               </div>
               {view === "board" && (
                 <>
+                  {!!board.subprojects?.length && <details className="subprojects-panel">
+                    <summary>Подпроекты <span className="count">{board.subprojects.length}</span><span className="muted">Одна доска для всех направлений</span></summary>
+                    <div className="subprojects-list">{[...board.subprojects].sort((a, b) => subprojectPath(board.subprojects, a.id).localeCompare(subprojectPath(board.subprojects, b.id), "ru")).map((s) => <div key={s.id}>
+                      <button className="text-button" onClick={() => setSubprojectFilter(s.id)} title={s.description}>{subprojectPath(board.subprojects, s.id)}</button>
+                      <span className="muted">{board.tasks.filter((t) => inSubproject(board.subprojects, t.subproject_id, s.id)).length} задач</span>
+                      <button className="icon-button" aria-label={`Добавить вложенный подпроект в ${s.title}`} onClick={() => setModal({ kind: "subproject", parent_id: s.id })}><Plus size={14} /></button>
+                      <button className="icon-button" aria-label={`Изменить подпроект ${s.title}`} onClick={() => setModal({ kind: "subproject", subproject: s })}><Pencil size={14} /></button>
+                    </div>)}</div>
+                  </details>}
                   <div className="board-toolbar">
                     <div className="search-field">
                       <Search size={16} />
@@ -2132,6 +2192,10 @@ export default function App() {
                       )}
                     </div>
                     <div className="filter-controls">
+                      <select aria-label="Фильтр подпроекта" value={subprojectFilter} onChange={(e) => setSubprojectFilter(e.target.value)}>
+                        <option value="">Все подпроекты</option><option value="unassigned">Без подпроекта</option>
+                        {[...(board.subprojects || [])].sort((a, b) => subprojectPath(board.subprojects || [], a.id).localeCompare(subprojectPath(board.subprojects || [], b.id), "ru")).map((s) => <option key={s.id} value={s.id}>{subprojectPath(board.subprojects || [], s.id)} · с вложенными</option>)}
+                      </select>
                       <select
                         aria-label="Фильтр типа задачи"
                         value={taskTypeFilter}
@@ -2220,7 +2284,7 @@ export default function App() {
                       </button>
                     </div>
                   ) : !listView ? (
-                    <KanbanBoard key={board.project.id} tasks={tasks} agents={bootstrap.agents}
+                    <KanbanBoard key={board.project.id} tasks={tasks} agents={bootstrap.agents} subprojects={board.subprojects || []}
                       onOpen={openTask} onMove={(task, status) => setMove({ task, status })} />
                   ) : (
                     <div className="board is-list">
@@ -2239,6 +2303,7 @@ export default function App() {
                               <div className="task-list-heading">
                                 <h3>{task.title}</h3>
                                 <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
+                                {task.subproject_id && <span className="subproject-tag">{subprojectPath(board.subprojects || [], task.subproject_id)}</span>}
                               </div>
                               <StatusPill status={task.status} />
                               <div className="task-card-footer">

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from uuid import uuid4
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -93,17 +94,146 @@ def test_desktop_connector_config_and_runtime_discovery(tmp_path, monkeypatch):
         mcp_server.connection_options(data_dir=data)
 
 
+def test_frozen_mcp_forwarding_checks_version_paths_and_live_proof(tmp_path, monkeypatch):
+    from desktop import runtime as desktop_runtime
+    data = tmp_path / "personal data"
+    old = data / "vscode-runtime" / "1.4.0" / "AgentboardMCP.exe"
+    old.parent.mkdir(parents=True)
+    old.touch()
+    directory = data / "vscode-runtime" / "1.5.0"
+    (directory / "_internal").mkdir(parents=True)
+    target = directory / "AgentboardMCP.exe"
+    target.touch()
+    (directory / "Agentboard.exe").touch()
+    marker = directory / "_internal" / "package.json"
+    marker.write_text('{"version":"1.5.0"}', encoding="utf-8")
+    descriptor = {"schema_version": 1, "mode": "vscode", "version": "1.5.0", "data_dir": str(data),
+                  "executable": str(target), "base_url": "http://127.0.0.1:4242", "pid": 1234, "instance_id": str(uuid4())}
+    runtime_file = data / "runtime.json"
+    def write(value):
+        runtime_file.write_text(json.dumps(value), encoding="utf-8")
+    write(descriptor)
+    health = {"status": "ok", "mcp_running": True, **{field: descriptor[field] for field in ("mode", "version", "pid", "instance_id")}}
+    probes = []
+    body = [json.dumps(health).encode()]
+    class RuntimeApi:
+        def open(self, request, timeout):
+            assert request.full_url == "http://127.0.0.1:4242/api/health" and timeout == 5
+            assert request.get_header("Authorization") is None and request.get_header("X-agentboard-instance") is None
+            probes.append(request)
+            return io.BytesIO(body[0])
+    def opener(*handlers):
+        assert handlers[0].proxies == {} and isinstance(handlers[1], mcp_server.NoRedirect)
+        return RuntimeApi()
+    monkeypatch.setattr(mcp_server, "build_opener", opener)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(old))
+    monkeypatch.setattr(desktop_runtime, "VERSION", "1.4.0")
+    assert mcp_server.forwarding_target(data, None) == target.resolve()
+    assert len(probes) == 1
+    for version in ["1.4.0", "1.3.9"]:
+        write({**descriptor, "version": version})
+        assert mcp_server.forwarding_target(data, None) is None
+    write({**descriptor, "mode": "desktop"})
+    assert mcp_server.forwarding_target(data, None) is None
+    write(descriptor)
+    assert mcp_server.forwarding_target(data, "http://127.0.0.1:4242") is None
+    assert mcp_server.forwarding_target(None, None) is None
+    with monkeypatch.context() as external:
+        external.setattr(sys, "executable", str(tmp_path / "other" / "AgentboardMCP.exe"))
+        assert mcp_server.forwarding_target(data, None) is None
+    with monkeypatch.context() as source:
+        source.setattr(sys, "frozen", False)
+        assert mcp_server.forwarding_target(data, None) is None
+    assert len(probes) == 1
+    for changes in [{"schema_version": True}, {"data_dir": str(tmp_path / "other")},
+                    {"executable": str(tmp_path / "unexpected.exe")}, {"instance_id": "not-a-uuid"},
+                    {"pid": True}, {"pid": -1}, {"base_url": "http://attacker.example"},
+                    {"base_url": "http://127.0.0.1"}, {"base_url": 123}, {"version": "../../other"}]:
+        write({**descriptor, **changes})
+        with pytest.raises(ValueError):
+            mcp_server.forwarding_target(data, None)
+    assert len(probes) == 1
+    write(descriptor)
+    marker.write_text('{"version":"1.4.0"}', encoding="utf-8")
+    with pytest.raises(ValueError):
+        mcp_server.forwarding_target(data, None)
+    marker.write_text('{"version":"1.5.0"}', encoding="utf-8")
+    for changes in [{"instance_id": str(uuid4())}, {"pid": 5678}, {"mode": "desktop"},
+                    {"version": "1.4.0"}, {"status": "other"}, {"mcp_running": "true"}]:
+        body[0] = json.dumps({**health, **changes}).encode()
+        with pytest.raises(ValueError):
+            mcp_server.forwarding_target(data, None)
+    body[0] = b" " * 16385
+    with pytest.raises(ValueError, match="размер"):
+        mcp_server.forwarding_target(data, None)
+    write({**descriptor, "pid": 1})
+    body[0] = json.dumps({**health, "pid": True}).encode()
+    with pytest.raises(ValueError):
+        mcp_server.forwarding_target(data, None)
+    write(descriptor)
+    class UnreachableApi:
+        def open(self, *_args, **_kwargs):
+            raise URLError("test-only unavailable runtime")
+    with monkeypatch.context() as offline:
+        offline.setattr(mcp_server, "build_opener", lambda *_handlers: UnreachableApi())
+        with pytest.raises(URLError):
+            mcp_server.forwarding_target(data, None)
+    body[0] = json.dumps(health).encode()
+    # The new companion sees its own version and stops forwarding, even with the same descriptor.
+    with monkeypatch.context() as updated:
+        updated.setattr(desktop_runtime, "VERSION", "1.5.0")
+        updated.setattr(sys, "executable", str(target))
+        assert mcp_server.forwarding_target(data, None) is None
+
+
+def test_frozen_mcp_handoff_keeps_stdio_arguments_session_and_exit_code(tmp_path, monkeypatch):
+    from desktop import runtime as desktop_runtime
+    target = tmp_path / "new runtime" / "AgentboardMCP.exe"
+    target.parent.mkdir()
+    target.touch()
+    monkeypatch.setattr(mcp_server, "forwarding_target", lambda data, url: target)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Old companion must not load credentials, open its API or create a store")
+    monkeypatch.setattr(mcp_server, "connection_options", forbidden)
+    monkeypatch.setattr(mcp_server, "load_token", forbidden)
+    monkeypatch.setattr(mcp_server, "build_server", forbidden)
+    resets = []
+    monkeypatch.setattr(desktop_runtime, "external_program_environment", lambda: resets.append(True))
+    commands = []
+    def native_call(command, **options):
+        commands.append((command, options))
+        assert "cwd" not in options and options["shell"] is False
+        assert options["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        assert options["creationflags"] == (subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        assert options["stdin"] is sys.stdin and options["stdout"] is sys.stdout and options["stderr"] is sys.stderr
+        assert "capture_output" not in options
+        return 7
+    monkeypatch.setattr(mcp_server.subprocess, "call", native_call)
+    original = ["--agent", "claude", "--data-dir", str(tmp_path), "--token-file", "relative-identity.json",
+                "--session-id", "existing-chat"]
+    with pytest.raises(SystemExit) as stopped:
+        mcp_server.main(original)
+    assert stopped.value.code == 7 and resets == [True]
+    assert commands[0][0] == [str(target), "--mcp", *original, "--session-id", "existing-chat"]
+    with pytest.raises(SystemExit):
+        mcp_server.main(["--agent", "codex", "--data-dir", str(tmp_path)])
+    assert commands[1][0][-2] == "--session-id" and commands[1][0][-1].startswith("mcp-")
+
+
 def test_mcp_collection_pages_stay_bounded(monkeypatch):
     """Large API collections cannot overflow a requested MCP page or hide continuation."""
     sections = [{"id": f"section-{index}", "project_id": "project", "title": "Section " + str(index),
                  "version": 1, "description": "x" * 50000} for index in range(500)]
+    subprojects = [{"id": f"subproject-{index}", "project_id": "project", "title": "Workstream " + str(index),
+                    "version": 1, "parent_id": None, "description": "y" * 50000} for index in range(500)]
     agents = [{"id": f"agent-{index}", "name": "Agent " + str(index), "kind": "codex"}
               for index in range(500)]
 
     class LargeApi:
         def open(self, request, timeout):
             data = {"projects": [], "agents": agents} if request.full_url.endswith("/bootstrap") else {
-                "project": {"id": "project", "name": "Large board"}, "sections": sections,
+                "project": {"id": "project", "name": "Large board"}, "sections": sections, "subprojects": subprojects,
                 "tasks": [], "activity": [],
             }
             return io.BytesIO(json.dumps(data).encode())
@@ -112,10 +242,12 @@ def test_mcp_collection_pages_stay_bounded(monkeypatch):
     server = mcp_server.build_server("http://127.0.0.1:4242", "test-only", "codex", "test-page")
 
     async def read_pages():
-        text, first = await server.call_tool("get_board", {"project_id": "project", "limit": 1, "section_limit": 1})
+        text, first = await server.call_tool("get_board", {"project_id": "project", "limit": 1, "section_limit": 1, "subproject_limit": 1})
         assert len(first["sections"]) == 1 and first["total_sections"] == 500
         assert first["next_section_offset"] == 1 and "description" not in first["sections"][0]
         assert len(text[0].text) + len(json.dumps(first)) < 5000
+        assert len(first["subprojects"]) == 1 and first["total_subprojects"] == 500 and first["next_subproject_offset"] == 1
+        assert "description" not in first["subprojects"][0]
         _, second = await server.call_tool("get_board", {"project_id": "project", "section_limit": 1, "section_offset": 1})
         assert second["sections"][0]["id"] != first["sections"][0]["id"]
         _, maximum = await server.call_tool("get_board", {"project_id": "project", "section_limit": 100, "section_offset": 400})
@@ -124,6 +256,10 @@ def test_mcp_collection_pages_stay_bounded(monkeypatch):
         assert context["section_context"]["id"] == "section-499"
         assert context["section_context"]["description"].startswith("x" * 2000)
         assert len(context["section_context"]["description"]) < 2100
+        _, subcontext = await server.call_tool("get_board", {"project_id": "project", "subproject_id": "subproject-499",
+            "subproject_limit": 1, "subproject_offset": 499})
+        assert subcontext["subproject_context"]["id"] == "subproject-499" and subcontext["next_subproject_offset"] is None
+        assert len(subcontext["subproject_context"]["description"]) < 2100
         _, identities = await server.call_tool("list_projects", {"agent_limit": 1, "agent_offset": 499})
         assert identities["agents"][0]["id"] == "agent-499"
         assert len(identities["agents"]) == 1 and identities["total_agents"] == 500
@@ -263,7 +399,7 @@ def test_mcp_workflow_and_project_setup(tmp_path, monkeypatch):
                         await claude_client.initialize()
                         listed = await codex_client.list_tools()
                         tools = {tool.name: tool for tool in listed.tools}
-                        assert {"create_task", "claim_task", "log_change", "ready_tasks", "get_history"} <= tools.keys()
+                        assert {"create_task", "claim_task", "log_change", "ready_tasks", "get_history", "create_subproject", "update_subproject"} <= tools.keys()
                         assert tools["get_task"].annotations.readOnlyHint is True
                         assert tools["log_change"].annotations.readOnlyHint is False
                         assert "idempotency_key" in tools["create_task"].inputSchema["required"]
@@ -298,6 +434,40 @@ def test_mcp_workflow_and_project_setup(tmp_path, monkeypatch):
                         assert (await call(codex_client, "create_task", direct_args))["id"] == direct_task["id"]
                         direct_board = await call(claude_client, "get_board", {"project_id": direct_project["id"]})
                         assert len(direct_board["sections"]) == 1 and direct_board["tasks"][0]["task_type"] == "research"
+                        group_args = {"project_id": direct_project["id"], "title": "Website", "reason": "Group parallel work", "idempotency_key": "subproject-root"}
+                        root_group = await call(codex_client, "create_subproject", group_args)
+                        assert await call(codex_client, "create_subproject", group_args) == root_group
+                        child_group = await call(claude_client, "create_subproject", {**group_args, "title": "Payments",
+                            "parent_id": root_group["id"], "idempotency_key": "subproject-child"})
+                        assert "HTTP_422" in await call(codex_client, "update_subproject", {"subproject_id": root_group["id"],
+                            "expected_version": 1, "changes": {"parent_id": child_group["id"]}, "reason": "Reject cycle", "idempotency_key": "subproject-cycle"}, error=True)
+                        root_task = await call(codex_client, "create_task", {**direct_args, "subproject_id": root_group["id"],
+                            "title": "Website chat", "idempotency_key": "root-chat-task"})
+                        child_task = await call(claude_client, "create_task", {**direct_args, "subproject_id": child_group["id"],
+                            "title": "Payments chat", "idempotency_key": "child-chat-task"})
+                        filtered = await call(claude_client, "get_board", {"project_id": direct_project["id"], "subproject_id": root_group["id"]})
+                        assert {item["id"] for item in filtered["tasks"]} == {root_task["id"], child_task["id"]}
+                        exact = await call(codex_client, "ready_tasks", {"project_id": direct_project["id"], "subproject_id": root_group["id"], "include_descendants": False})
+                        assert [item["id"] for item in exact["tasks"]] == [root_task["id"]]
+                        claims = await asyncio.gather(*[
+                            call(agent, "claim_task", {"task_id": item["id"], "expected_version": 1,
+                                 "reason": "Independent parallel chat", "idempotency_key": "parallel-claim"})
+                            for agent, item in [(codex_client, root_task), (claude_client, child_task)]])
+                        assert [item["claim_owner_id"] for item in claims] == ["codex", "claude"]
+                        ready_group = await call(codex_client, "ready_tasks", {"project_id": direct_project["id"], "subproject_id": root_group["id"]})
+                        assert ready_group["tasks"] == []
+                        assert "VALIDATION_ERROR" in await call(codex_client, "get_board", {"project_id": project["id"], "subproject_id": root_group["id"]}, error=True)
+                        detached = await call(claude_client, "update_subproject", {"subproject_id": child_group["id"],
+                            "expected_version": child_group["version"], "changes": {"parent_id": None},
+                            "reason": "Promote independent workstream", "idempotency_key": "detach-subproject"})
+                        assert detached["parent_id"] is None and detached["version"] == 2
+                        assert "HTTP_409" in await call(codex_client, "update_subproject", {"subproject_id": child_group["id"],
+                            "expected_version": 1, "changes": {"title": "Stale"}, "reason": "Reject stale write", "idempotency_key": "stale-subproject"}, error=True)
+                        unassigned = await call(claude_client, "update_task", {"task_id": child_task["id"], "expected_version": claims[1]["version"],
+                            "changes": {"subproject_id": None}, "reason": "Return task to project", "idempotency_key": "unassign-subproject"})
+                        assert unassigned["subproject_id"] is None and unassigned["task_type"] == "research"
+                        group_history = await call(codex_client, "get_history", {"project_id": direct_project["id"]})
+                        assert any(item["action"] == "subproject.updated" and item["session_id"] == "test-claude" for item in group_history["events"])
                         direct_retyped = await call(codex_client, "update_task", {"task_id": direct_task["id"],
                             "expected_version": direct_task["version"], "changes": {"task_type": "development"},
                             "reason": "Start implementation", "idempotency_key": "direct-retype"})

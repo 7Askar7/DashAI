@@ -622,6 +622,7 @@ button:focus:not(:focus-visible) {
   white-space: nowrap;
 }
 .project-actions {
+  flex-wrap: wrap;
   display: flex;
   gap: 9px;
   padding-top: 24px;
@@ -768,10 +769,32 @@ button:focus:not(:focus-visible) {
 }
 .filter-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
   flex: 1;
 }
+.subproject-tag {
+  display: block;
+  max-width: 100%;
+  color: #b4f4a5;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.subprojects-panel {
+  border: 1px solid #2b3745;
+  border-radius: 7px;
+  padding: 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+.subprojects-panel summary { cursor: pointer; }
+.subprojects-panel summary > span { margin-left: 8px; }
+.subprojects-list { display: grid; gap: 8px; margin-top: 12px; }
+.subprojects-list > div { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.subprojects-list .text-button { margin-right: auto; text-align: left; overflow-wrap: anywhere; min-width: 0; }
+.subprojects-list .icon-button { flex-shrink: 0; }
 .filter-controls select,
 .history-toolbar select {
   border: 1px solid #2d3947;

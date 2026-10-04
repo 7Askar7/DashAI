@@ -1,0 +1,137 @@
+{
+  "name": "agentboard",
+  "displayName": "DashAI",
+  "description": "Личная Kanban-доска, задачи и история работы Codex и Claude Code внутри VS Code.",
+  "version": "1.4.0",
+  "publisher": "7askar7",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "kanban",
+    "codex",
+    "claude",
+    "agents",
+    "local"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/7Askar7/DashAI.git"
+  },
+  "homepage": "https://github.com/7Askar7/DashAI/blob/main/docs/vscode.md",
+  "bugs": {
+    "url": "https://github.com/7Askar7/DashAI/issues"
+  },
+  "main": "./extension.cjs",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:agentboard.launcher"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Локальный сервер и подключение агентов доступны в доверенном проекте."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "DashAI использует локальную папку Windows и локальных клиентов агентов."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentboard.open",
+        "title": "Открыть доску",
+        "category": "DashAI",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "agentboard.connectAgents",
+        "title": "Подключить Codex и Claude Code",
+        "category": "DashAI"
+      },
+      {
+        "command": "agentboard.checkUpdates",
+        "title": "Проверить обновления",
+        "category": "DashAI"
+      },
+      {
+        "command": "agentboard.stop",
+        "title": "Остановить локальный сервер",
+        "category": "DashAI"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentboard",
+          "title": "DashAI",
+          "icon": "assets/agentboard.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentboard": [
+        {
+          "id": "agentboard.launcher",
+          "name": "Доска проектов"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "agentboard.launcher",
+        "contents": "Личные проекты, задачи и история работы агентов на этом компьютере.\n[Открыть доску](command:agentboard.open)\n[Подключить Codex и Claude Code](command:agentboard.connectAgents)\n[Проверить обновления](command:agentboard.checkUpdates)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "agentboard.open",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "navigation@20"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "agentboard.open",
+          "when": "view == agentboard.launcher",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DashAI",
+      "properties": {
+        "agentboard.automaticUpdates": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Проверять и устанавливать подписанные обновления расширения из GitHub Releases. VS Code может предложить перезапустить расширения."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test tests",
+    "package": "vsce package --target win32-x64 --no-dependencies --skip-license"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.0.0"
+  }
+}

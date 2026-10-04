@@ -31,7 +31,7 @@ async def protocol_session(parameters, errlog) -> None:
         async with ClientSession(reader, writer) as session:
             await session.initialize()
             tools = {tool.name for tool in (await session.list_tools()).tools}
-            assert {"create_project", "get_board", "create_task", "log_change", "connector_status"} <= tools
+            assert {"create_project", "get_board", "create_task", "log_change", "connector_status", "create_subproject", "update_subproject"} <= tools
 
             async def call(name: str, arguments: dict) -> dict:
                 result = await session.call_tool(name, arguments)
@@ -52,6 +52,42 @@ async def protocol_session(parameters, errlog) -> None:
             assert detail["title"] == "Frozen protocol works" and detail["task_type"] == "testing"
             board = await call("get_board", {"project_id": project["id"]})
             assert next(item for item in board["tasks"] if item["id"] == task["id"])["task_type"] == "testing"
+            parent = None
+            groups = []
+            for index, title in enumerate(["Website", "Payments", "Testing"]):
+                args = {"project_id": project["id"], "title": title, "parent_id": parent,
+                        "reason": "Verify bundled nested subprojects", "idempotency_key": "frozen-subproject-" + str(index)}
+                group = await call("create_subproject", args)
+                assert await call("create_subproject", args) == group
+                groups.append(group)
+                parent = group["id"]
+            grouped = await call("create_task", {"project_id": project["id"], "subproject_id": groups[-1]["id"],
+                "task_type": "testing", "title": "Nested frozen task", "rationale": "Track a separate agent workstream",
+                "reason": "Verify subproject assignment", "idempotency_key": "frozen-nested-task"})
+            assigned = await call("update_task", {"task_id": task["id"], "expected_version": task["version"],
+                "changes": {"subproject_id": groups[0]["id"]}, "reason": "Move task into workstream", "idempotency_key": "frozen-assign"})
+            blocked = await call("update_task", {"task_id": task["id"], "expected_version": assigned["version"],
+                "changes": {"status": "blocked"}, "reason": "Verify grouping survives status change", "idempotency_key": "frozen-block"})
+            assert blocked["subproject_id"] == groups[0]["id"] and blocked["task_type"] == "testing"
+            subtree = await call("get_board", {"project_id": project["id"], "subproject_id": groups[0]["id"]})
+            assert {item["id"] for item in subtree["tasks"]} == {task["id"], grouped["id"]}
+            assert len(subtree["subprojects"]) == 3 and subtree["subproject_context"]["id"] == groups[0]["id"]
+            exact = await call("get_board", {"project_id": project["id"], "subproject_id": groups[0]["id"], "include_descendants": False})
+            assert [item["id"] for item in exact["tasks"]] == [task["id"]]
+            ready = await call("ready_tasks", {"project_id": project["id"], "subproject_id": groups[0]["id"]})
+            assert [item["id"] for item in ready["tasks"]] == [grouped["id"]]
+            cycle = await session.call_tool("update_subproject", {"subproject_id": groups[0]["id"], "expected_version": 1,
+                "changes": {"parent_id": groups[-1]["id"]}, "reason": "Reject frozen hierarchy cycle", "idempotency_key": "frozen-cycle"})
+            assert cycle.isError and "HTTP_422" in " ".join(item.text for item in cycle.content if item.type == "text")
+            cleared = await call("update_task", {"task_id": grouped["id"], "expected_version": grouped["version"],
+                "changes": {"subproject_id": None}, "reason": "Return task to project", "idempotency_key": "frozen-clear"})
+            assert cleared["subproject_id"] is None and cleared["task_type"] == "testing"
+            detached = await call("update_subproject", {"subproject_id": groups[-1]["id"], "expected_version": 1,
+                "changes": {"parent_id": None}, "reason": "Promote independent subproject", "idempotency_key": "frozen-detach"})
+            assert detached["parent_id"] is None and detached["version"] == 2
+            history = await call("get_history", {"project_id": project["id"]})
+            assert sum(item["action"] == "subproject.created" for item in history["events"]) == 3
+            assert any(item["action"] == "subproject.updated" for item in history["events"])
             section = await call("create_section", {"project_id": project["id"], "title": "Legacy compatibility",
                                                       "reason": "Verify existing clients", "idempotency_key": "frozen-section"})
             legacy = await call("create_task", {"project_id": project["id"], "section_id": section["id"],
@@ -90,7 +126,13 @@ def main() -> None:
                         raise AssertionError("Frozen GUI server did not become healthy")
                     time.sleep(0.25)
             with opener.open(url, timeout=5) as response:
-                assert response.read() == (BUNDLE / "_internal" / "dist" / "index.html").read_bytes()
+                page = response.read()
+                assert page == (BUNDLE / "_internal" / "dist" / "index.html").read_bytes()
+                assert b"<title>DashAI" in page
+            cover = BUNDLE / "_internal" / "dist" / "brand" / "dashai-cover.png"
+            assert cover.is_file() and cover.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+            with opener.open(url + "/brand/dashai-cover.png", timeout=10) as response:
+                assert response.read() == cover.read_bytes()
             with opener.open(url + "/api/connectors", timeout=5) as response:
                 metadata = json.load(response)
             assert Path(metadata["credentials_file"]).samefile(data / "connector-secrets.json")
@@ -114,7 +156,7 @@ def main() -> None:
             if process.poll() is None:
                 process.terminate()
             process.wait(timeout=15)
-    print("Frozen smoke passed: version, isolated data, bundled UI/API, project configs, real MCP typed tasks without sections and legacy compatibility.")
+    print("Frozen smoke passed: version, isolated data, DashAI UI/cover, project configs, real MCP nested subprojects on one board, typed tasks and legacy compatibility.")
 
 
 if __name__ == "__main__":
