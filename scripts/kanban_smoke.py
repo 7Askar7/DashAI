@@ -307,6 +307,23 @@ with tempfile.TemporaryDirectory(prefix='agentboard-kanban-') as directory:
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), width
                     geometry[str(width)] = page.locator('.kanban-scroll').evaluate(
                         'e => ({client: e.clientWidth, scroll: e.scrollWidth})')
+                    capture_state = '''() => {
+                        const link = document.querySelector('.skip-link');
+                        const rect = link.getBoundingClientRect();
+                        return {scroll_y: scrollY, skip_top: rect.top, skip_bottom: rect.bottom,
+                            skip_focused: document.activeElement === link,
+                            active_tag: document.activeElement.tagName,
+                            active_text: document.activeElement.textContent.trim()};
+                    }'''
+                    geometry[str(width)]['before_capture'] = page.evaluate(capture_state)
+                    if width == 320:
+                        page.screenshot(path=str(ARTIFACTS / 'kanban-viewport-before-320.png'))
+                    # Full-page Chromium capture can paint an offscreen fixed element at scrollY + top.
+                    page.evaluate('window.scrollTo(0, 0)')
+                    expect(page.locator('.toast')).to_have_text('')
+                    state = page.evaluate(capture_state)
+                    assert state['scroll_y'] == 0 and state['skip_bottom'] <= 0 and not state['skip_focused']
+                    geometry[str(width)]['after_scroll_to_top'] = state
                     page.screenshot(path=str(ARTIFACTS / f'kanban-mobile-{width}.png'), full_page=True)
                 dialog = move(task, 'blocked')
                 confirm(dialog, 'Mobile status change keeps a reason and the project context')

@@ -44,3 +44,9 @@ node scripts/python.mjs scripts/kanban_smoke.py
 ## Границы
 
 Эта проверка охватывает production web UI и общий HTTP API. Она не выдается за новый install/update lifecycle или опубликованный выпуск 1.2.0. Installer и CI этим reviewer не запускались. MCP API не изменен; существующие shared-domain tests не подменяются browser smoke.
+
+## Публичный выпуск и финальные QA-артефакты
+
+После публикации отдельный reviewer прочитал публичный [релиз 1.2.0](https://github.com/7Askar7/DashAI/releases/tag/v1.2.0) и результат [CI 37220986415](https://github.com/7Askar7/DashAI/actions/runs/37220986415). Stable/non-draft версия и target commit `2c1a235136c980dec7f56313d1166ea69e299650` совпадают. Настоящий `check_update` подтвердил Ed25519 manifest прежним bundled key без GitHub credentials; installer asset URL, размер **24 131 177** и SHA-256 `b02d0f5241cc47686c08bbc0850f67442360300cec7c166db5d41cc3e7aaf31c` совпадают с signed payload и GitHub metadata. Клиент 1.1.0 получает 1.2.0; клиент 1.2.0 повторного обновления не получает. Read-only audit **PASS**, installer не запускался.
+
+Проверен странный skip-link на mobile full-page screenshot: до съемки его rect `−50…−10.5 px`, фокус на кнопке «В работе», ссылка полностью за пределами реального viewport. Это artifact съемки после scrollY=163. Smoke теперь снимает после scroll-to-top и исчезновения toast, сохраняя геометрию и activeElement; новый кадр просмотрен, повторные **9 groups PASS**. Изменен только QA capture, runtime/styles и релиз не изменены.
