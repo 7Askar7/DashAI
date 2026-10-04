@@ -8,6 +8,9 @@ param(
     [Parameter(Mandatory = $true)][string]$AppPath
 )
 $ErrorActionPreference = 'Stop'
+# PowerShell 7 callers (including GitHub Actions) can pass their module path to
+# Windows PowerShell 5.1. Load only the Windows modules used by this native helper.
+$env:PSModulePath = "${env:SystemRoot}\System32\WindowsPowerShell\v1.0\Modules"
 $updateLog = Join-Path ([System.IO.Path]::GetDirectoryName($Installer)) 'install-update.log'
 
 try {

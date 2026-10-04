@@ -97,7 +97,8 @@ def test_live_wal_backup_closes_handles_and_native_handoff_rechecks_hash(tmp_pat
                                  "-ParentPid", "2147483646", "-HelperPid", "2147483645",
                                  "-McpMutex", "Local\\AgentboardTestNeverCreated",
                                  "-AppPath", str(native_dir / "missing-app.exe")],
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10,
+                                env={**os.environ, "PSModulePath": str(tmp_path / "missing-modules")})
         assert result.returncode == 1, result.stdout + result.stderr
         log = native_dir / "install-update.log"
         assert log.is_file(), result.stdout + result.stderr

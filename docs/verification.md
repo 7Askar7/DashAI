@@ -44,3 +44,17 @@ Ponytail full применялся во время реализации. Отд�
 Один пользователь ОС, loopback API, внешние agents. Dashboard не является runner моделей или filesystem watcher. Code changes записываются явным `log_change`; evidence хранит результат, сообщенный автором. Last seen — время последнего запроса, не живой heartbeat процесса. Наличие evidence не доказывает независимое принятие задачи. Экспорт сохраняет все данные; MCP previews маркируются как сокращенные.
 
 Codex project config начинает действовать после доверия проекту либо при `npm run codex`, который передает только MCP параметры CLI overrides. Для Claude Code требуется обычное разрешение project MCP в новой сессии. Глобальные client settings и чужие сервисы не изменялись.
+
+## Windows-поставка 1.1.0
+
+Проверена отдельная установка без Python, Node.js, checkout и административных прав. Собранный `Agentboard-Setup-1.1.0.exe` использует Python 3.14.3 и хранит пользовательскую SQLite/credentials отдельно от программы. В installer встроены публичный ключ издателя и HTTPS feed DashAI; private key, рабочая база и project connector configs в bundle отсутствуют.
+
+- **17 тестов PASS** в изолированной production build-среде: 9 API, 5 MCP/launcher, 2 desktop security/resource checks и 1 release contract.
+- **Frozen smoke PASS**: windowed EXE поднимает настоящий UI/API, console companion через официальный SDK создает проект, раздел и карточку; project configs используют установленный EXE. Stdio shutdown завершается без traceback.
+- **9 групп browser integration PASS** после изменения connector metadata; реальные forms/API/SQLite, конфликт, export и mobile navigation.
+- Независимые **19 adversarial checks PASS**: подпись/ключ/подмена, replay и downgrade, HTTPS, размер и SHA-256, потоковые лимиты, WAL backup и native PowerShell отказ поврежденному installer.
+- Независимый **реальный lifecycle 7/7 PASS**: fresh Inno install; запись задач/notes/code changes через MCP; запрет установки при работающей программе; signed handoff → PowerShell → Inno → новая QA-версия 1.1.1; точное сохранение всех persisted экспортных полей и credentials; запрет downgrade; uninstall сохраняет SQLite и удаляет собственный автозапуск.
+
+Lifecycle использует отдельную папку и временную тестовую регистрацию установщика. Итог: `artifacts/qa/desktop-lifecycle-20261004-172146/result.json`; тестовая регистрация Windows восстановлена, рабочая база пользователя не использовалась. Из сравнения экспорта исключалось только динамическое время самого export-запроса, а не данные или timestamps истории.
+
+Все замечания независимого [desktop-review](reviews/desktop-review.md) исправлены и перепроверены; отдельный Ponytail-review — **Lean already. Ship.** Границы: Windows 10/11 x64; браузерный UI; pinned Ed25519 channel key; начальный installer без платного Authenticode сертификата. Это не полная реализация TUF и не тест всех будущих миграций схемы. [Процесс установки и выпуска](release.md).
