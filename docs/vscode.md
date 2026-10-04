@@ -45,6 +45,16 @@ GitHub Releases продолжает распространять VSIX с под
 
 Ручная загрузка VSIX описана в [официальной инструкции Microsoft](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#publish-an-extension). Локальная готовность пакета и проверка в редакторе отделены от факта публикации.
 
+## Отказ «suspicious content» при загрузке
+
+Первая ручная загрузка пакета 1.4.1 отклонена Marketplace с сообщением `Your extension has suspicious content`. Оно не указывает конкретное поле или файл. Повторная локальная проверка и независимый review не выявили нарушения metadata; это не доказывает прохождение серверной проверки или ложноположительное срабатывание. [Отчет](reviews/marketplace-rejection-review.md).
+
+Открыть **Manage Publishers & Extensions → Contact Microsoft** и запросить проверку. Этот путь указан в [официальном FAQ публикации](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#i-need-help-with-my-vs-marketplace-account-or-support-in-publishing-an-extension). Команда Marketplace также направляет случаи с той же ошибкой на **VSMarketplace@microsoft.com**: [ответ команды](https://github.com/microsoft/vsmarketplace/issues/2010#issuecomment-4959860814).
+
+Готовый английский текст: [marketplace-support.txt](marketplace-support.txt). Перед отправкой приложить скриншот ошибки; точный VSIX предоставить по запросу или через разрешенный поддержкой способ передачи. В тексте зафиксированы версия, source commit, размер и SHA-256 отклоненного файла. Письмо подготовлено, но не отправлено. В **Details** издателя также проверить, есть ли отдельное требование подтвердить контактный email; выполнение этого требования само по себе не гарантирует устранение данного отказа.
+
+Пакет и его identity сохранены до получения диагностик; повторные изменения бренда, версии, runtime или защиты обновлений без подтвержденной причины не являются исправлением. Расширение остается доступным для локальной установки через **Install from VSIX…**. Публикация в Marketplace пока не выполнена.
+
 ## Собрать и выпустить
 
 Из корня репозитория:

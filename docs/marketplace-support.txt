@@ -1,0 +1,27 @@
+To: VSMarketplace@microsoft.com
+Subject: Request for review: DashAI / 7Askar7.agentboard upload rejected
+
+Hello Visual Studio Marketplace team,
+
+I created the publisher 7Askar7 (display name DashAI). My first manual VSIX upload through Manage Publishers & Extensions was rejected with:
+
+"Your extension has suspicious content. Please fix your extension metadata, or contact support if you need assistance."
+
+Publisher: 7Askar7
+Extension ID: 7Askar7.agentboard
+Display name: DashAI
+Version: 1.4.1
+Target: win32-x64
+Repository: https://github.com/7Askar7/DashAI
+Source commit: 2a5e8a44a47ace66c674c8c5310212efd2583232
+VSIX: Agentboard-VSCode-1.4.1-win32-x64.vsix
+Size: 35,895,190 bytes
+SHA-256: 45606ffcbd11de215ff09705e0c4fdbd9d57b5c08d5e0ee7647b3d387447fac2
+
+DashAI is a local task board with project history and MCP connectors for independently installed Codex and Claude Code clients. It bundles a PyInstaller Windows runtime and MCP companion so users do not need Python. The server listens only on localhost; personal data is stored separately in the user's local application folder. Optional updates use a pinned Ed25519 key and SHA-256 verification of GitHub Releases downloads.
+
+The package was built with @vscode/vsce. We checked JSON/XML metadata consistency, PNG icon dimensions, HTTPS README images, reachable project/support links, ZIP integrity, and isolation from our private credentials and project data. There are no bundled node_modules. Ten installation, UI, MCP, export, and persistence checks passed in an isolated official VS Code installation. These local checks do not reproduce the Marketplace's security screening.
+
+Please review this submission and publisher, and identify the specific field, file, or account requirement causing the rejection. If publisher/contact verification is required, please explain the steps. I can provide the exact VSIX and the upload error screenshot on request.
+
+Thank you.
