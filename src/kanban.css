@@ -172,7 +172,7 @@
   overflow-wrap: anywhere;
 }
 
-.kanban-section-tag {
+.task-type-tag {
   max-width: 100%;
   align-self: flex-start;
   padding: 3px 7px;

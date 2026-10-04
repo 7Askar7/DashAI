@@ -1,5 +1,14 @@
 export type Status = "backlog" | "in_progress" | "review" | "done" | "blocked";
 export type Priority = "urgent" | "high" | "medium" | "low";
+export type TaskType = "research" | "development" | "testing" | "bugfix" | "documentation" | "other";
+export const taskTypes: Record<TaskType, string> = {
+  research: "Исследование",
+  development: "Разработка",
+  testing: "Тестирование",
+  bugfix: "Исправление",
+  documentation: "Документация",
+  other: "Другое",
+};
 export type Agent = {
   id: string;
   name: string;
@@ -31,6 +40,7 @@ export type Task = {
   short_id: string;
   project_id: string;
   section_id: string;
+  task_type: TaskType;
   title: string;
   description: string;
   rationale: string;

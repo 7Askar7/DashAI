@@ -3,8 +3,8 @@ import { ArrowRightLeft, GripVertical, Link2 } from "lucide-react";
 import {
   priorities,
   statuses,
+  taskTypes,
   type Agent,
-  type Section,
   type Status,
   type Task,
 } from "./api";
@@ -13,7 +13,6 @@ import "./kanban.css";
 type Props = {
   tasks: Task[];
   agents: Agent[];
-  sections: Section[];
   onOpen: (id: string) => void;
   onMove: (task: Task, status: Status) => void;
 };
@@ -21,7 +20,6 @@ type Props = {
 export default function KanbanBoard({
   tasks,
   agents,
-  sections,
   onOpen,
   onMove,
 }: Props) {
@@ -31,9 +29,6 @@ export default function KanbanBoard({
   const [dropStatus, setDropStatus] = useState<Status | null>(null);
   const draggedTask = useRef<string | null>(null);
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
-  const sectionsById = new Map(
-    sections.map((section) => [section.id, section]),
-  );
 
   function finishDrag() {
     draggedTask.current = null;
@@ -135,7 +130,6 @@ export default function KanbanBoard({
                     const agent = task.assignee_id
                       ? agentsById.get(task.assignee_id)
                       : undefined;
-                    const section = sectionsById.get(task.section_id);
                     return (
                       <article
                         key={task.id}
@@ -187,14 +181,7 @@ export default function KanbanBoard({
                           >
                             {task.title}
                           </span>
-                          {section && (
-                            <span
-                              className="kanban-section-tag"
-                              title={section.title}
-                            >
-                              {section.title}
-                            </span>
-                          )}
+                          <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
                           <span className="kanban-card-meta">
                             <span
                               className={`kanban-agent-mark ${agent?.kind || "unassigned"}`}

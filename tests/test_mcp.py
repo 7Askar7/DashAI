@@ -164,6 +164,7 @@ def test_mcp_nested_history_and_notes_are_summaries(monkeypatch):
         assert preview["metadata"]["files_total"] == 200 and preview["metadata"]["files_truncated"]
         assert "truncated" in preview["metadata"]["diff"]
         _, board = await server.call_tool("get_board", {"project_id": "project"})
+        assert board["tasks"][0]["task_type"] == "other"
         assert len(board["tasks"][0]["depends_on"]) == 10
         assert board["tasks"][0]["depends_on_count"] == 128 and board["tasks"][0]["depends_on_truncated"]
         assert len(json.dumps(board)) < 50000
@@ -266,6 +267,10 @@ def test_mcp_workflow_and_project_setup(tmp_path, monkeypatch):
                         assert tools["get_task"].annotations.readOnlyHint is True
                         assert tools["log_change"].annotations.readOnlyHint is False
                         assert "idempotency_key" in tools["create_task"].inputSchema["required"]
+                        assert "section_id" not in tools["create_task"].inputSchema["required"]
+                        assert tools["create_task"].inputSchema["properties"]["task_type"]["enum"] == [
+                            "research", "development", "testing", "bugfix", "documentation", "other",
+                        ]
 
                         async def call(client, name, args, error=False):
                             result = await client.call_tool(name, args)
@@ -282,6 +287,28 @@ def test_mcp_workflow_and_project_setup(tmp_path, monkeypatch):
                         assert "HTTP_409" in await call(codex_client, "create_project", {**project_args, "name": "Different"}, error=True)
                         shared = await call(claude_client, "list_projects", {})
                         assert len(shared["projects"]) == 1 and shared["projects"][0]["id"] == project["id"]
+                        direct_project = await call(codex_client, "create_project", {
+                            "name": "Direct project board", "reason": "No section setup needed", "idempotency_key": "direct-project",
+                        })
+                        direct_args = {"project_id": direct_project["id"], "title": "Typed direct task", "task_type": "research",
+                                       "rationale": "Task creation must not require section provisioning", "reason": "Test direct board",
+                                       "idempotency_key": "direct-task"}
+                        direct_task = await call(codex_client, "create_task", direct_args)
+                        assert direct_task["task_type"] == "research"
+                        assert (await call(codex_client, "create_task", direct_args))["id"] == direct_task["id"]
+                        direct_board = await call(claude_client, "get_board", {"project_id": direct_project["id"]})
+                        assert len(direct_board["sections"]) == 1 and direct_board["tasks"][0]["task_type"] == "research"
+                        direct_retyped = await call(codex_client, "update_task", {"task_id": direct_task["id"],
+                            "expected_version": direct_task["version"], "changes": {"task_type": "development"},
+                            "reason": "Start implementation", "idempotency_key": "direct-retype"})
+                        direct_blocked = await call(codex_client, "update_task", {"task_id": direct_task["id"],
+                            "expected_version": direct_retyped["version"], "changes": {"status": "blocked"},
+                            "reason": "Waiting for input", "idempotency_key": "direct-status"})
+                        assert direct_blocked["task_type"] == "development"
+                        assert "HTTP_422" in await call(codex_client, "update_task", {"task_id": direct_task["id"],
+                            "expected_version": direct_blocked["version"], "changes": {"task_type": None},
+                            "reason": "Verify no null work type", "idempotency_key": "direct-null"}, error=True)
+                        await call(codex_client, "create_task", {**direct_args, "task_type": "unknown"}, error=True)
                         section = await call(codex_client, "create_section", {
                             "project_id": project["id"], "title": "Connector", "reason": "Group protocol work", "idempotency_key": "section-1",
                         })

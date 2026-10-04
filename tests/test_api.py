@@ -262,3 +262,131 @@ def test_composite_reads_share_a_snapshot(workspace, monkeypatch, endpoint):
     current = refreshed["projects"][0] if endpoint == "bootstrap" else refreshed["project"] if endpoint == "board" else refreshed["task"]
     current_events = refreshed["events"] if endpoint == "task" else refreshed["activity"]
     assert current["version"] == 2 and current_events[0]["after"]["version"] == 2
+
+
+def test_project_board_task_types_without_sections(workspace):
+    app, client, agents = workspace
+    project = post(client, "/api/projects", {"name": "Одна доска проекта"})
+    assert client.get(f"/api/projects/{project['id']}").json()["sections"] == []
+    payload = {"project_id": project["id"], "title": "Исследование", "rationale": REASON,
+               "task_type": "research", "idempotency_key": "direct-task"}
+    first = post(client, "/api/tasks", payload, agents["codex"])
+    assert post(client, "/api/tasks", payload, agents["codex"]) == first
+    for work_type in ["development", "testing", "bugfix", "documentation", "other"]:
+        created = post(client, "/api/tasks", {**payload, "task_type": work_type,
+                       "idempotency_key": "type-" + work_type}, agents["codex"])
+        assert created["task_type"] == work_type and created["section_id"] == first["section_id"]
+    omitted = post(client, "/api/tasks", {"project_id": project["id"], "section_id": None,
+                   "title": "Без указанного типа", "rationale": REASON})
+    assert omitted["task_type"] == "other" and omitted["section_id"] == first["section_id"]
+    board = client.get(f"/api/projects/{project['id']}").json()
+    assert len(board["sections"]) == 1 and len(board["tasks"]) == 7
+    assert board["sections"][0]["is_default"] is True
+    automatic = [event for event in board["activity"] if event["action"] == "section.created"]
+    assert len(automatic) == 1 and automatic[0]["actor_id"] == "codex"
+    assert automatic[0]["reason"] == REASON and automatic[0]["session_id"] == "test-codex"
+
+    retype = {"expected_version": first["version"], "changes": {"task_type": "development"},
+              "idempotency_key": "retype-task"}
+    response = client.patch(f"/api/tasks/{first['id']}", json={"reason": REASON, **retype}, headers=BROWSER)
+    assert response.status_code == 200
+    changed = response.json()
+    assert changed["task_type"] == "development" and changed["version"] == 2
+    assert client.patch(f"/api/tasks/{first['id']}", json={"reason": REASON, **retype}, headers=BROWSER).json() == changed
+    assert client.patch(f"/api/tasks/{first['id']}", json={"reason": REASON, **retype,
+                        "changes": {"task_type": "testing"}}, headers=BROWSER).status_code == 409
+    assert client.patch(f"/api/tasks/{first['id']}", json={"reason": REASON, **retype,
+                        "changes": {"task_type": None}}, headers=BROWSER).status_code == 422
+    patch(client, first, {"task_type": "bugfix"}, expected=409)
+    working = patch(client, changed, {"status": "in_progress"})
+    assert working["task_type"] == "development"
+    details = client.get(f"/api/tasks/{first['id']}").json()
+    event = next(event for event in details["events"] if event["action"] == "task.updated" and event["after"]["version"] == 2)
+    assert event["before"]["task_type"] == "research" and event["after"]["task_type"] == "development"
+    for bad in ["unknown", None, 42]:
+        post(client, "/api/tasks", {**payload, "task_type": bad}, expected=422)
+        patch(client, working, {"task_type": bad}, expected=422)
+    exported = client.get(f"/api/projects/{project['id']}/export").json()
+    assert {item["task_type"] for item in exported["tasks"]} == {"development", "testing", "bugfix", "documentation", "other"}
+
+    # Invalid work after creating the internal container rolls back both rows and audit.
+    invalid_project = post(client, "/api/projects", {"name": "Атомарность"})
+    post(client, "/api/tasks", {"project_id": invalid_project["id"], "title": "Неверная зависимость",
+         "rationale": REASON, "depends_on": ["missing"]}, expected=422)
+    rolled_back = client.get(f"/api/projects/{invalid_project['id']}").json()
+    assert rolled_back["sections"] == rolled_back["tasks"] == []
+    assert [event["action"] for event in rolled_back["activity"]] == ["project.created"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        concurrent = list(pool.map(lambda index: post(client, "/api/tasks", {
+            "project_id": invalid_project["id"], "title": "Параллельная " + str(index), "rationale": REASON,
+        }), range(2)))
+    assert concurrent[0]["section_id"] == concurrent[1]["section_id"]
+    with app.state.store.connect() as db:
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_legacy_task_projection_and_cached_retries_preserve_database(tmp_path):
+    app = create_app(tmp_path)
+    store = app.state.store
+    credentials_before = store.credentials_file.read_bytes()
+    timestamp = "2026-10-01T00:00:00.000Z"
+    project = {"id": "legacy-project", "name": "Старый проект", "description": "", "repository": "", "color": "#7c8aff",
+               "version": 1, "created_at": timestamp, "updated_at": timestamp}
+    section = {"id": "legacy-section", "project_id": project["id"], "title": "Старый раздел", "description": "",
+               "position": 0, "version": 1, "created_at": timestamp, "updated_at": timestamp}
+    create_body = {"project_id": project["id"], "section_id": section["id"], "title": "Старая задача", "description": "",
+                   "rationale": REASON, "acceptance_criteria": "Сохранить историю", "priority": "medium",
+                   "assignee_id": None, "depends_on": []}
+    original = {"id": "legacy-task", "short_id": "AD-001", **create_body, "status": "backlog", "version": 1,
+                "claim_owner_id": None, "claim_expires_at": None, "created_at": timestamp, "updated_at": timestamp}
+    updated = {**original, "title": "Старая уточненная задача", "version": 2}
+    note = {"id": "legacy-note", "task_id": original["id"], "kind": "comment", "body": "Сохраненная заметка",
+            "actor_id": "human", "created_at": timestamp, "metadata": {}}
+    patch_changes = {"title": updated["title"], "description": None, "rationale": None, "acceptance_criteria": None,
+                     "status": None, "priority": None, "assignee_id": None, "section_id": None, "depends_on": None}
+    with store.transaction() as db:
+        db.execute("INSERT INTO projects VALUES (?,?)", (project["id"], json.dumps(project)))
+        db.execute("INSERT INTO sections VALUES (?,?,?)", (section["id"], project["id"], json.dumps(section)))
+        db.execute("INSERT INTO tasks VALUES (?,?,?,?)", (original["id"], project["id"], section["id"], json.dumps(updated)))
+        db.execute("INSERT INTO notes VALUES (?,?,?,?)", (note["id"], original["id"], project["id"], json.dumps(note)))
+        human = next(actor for actor in store.agents(db) if actor["id"] == "human")
+        store.record(db, human, REASON, "task", original["id"], "task.created", None, original,
+                     project_id=project["id"], task_id=original["id"])
+        store.record(db, human, REASON, "task", original["id"], "task.updated", original, updated,
+                     project_id=project["id"], task_id=original["id"])
+        store.record(db, human, REASON, "note", note["id"], "note.created", None, note,
+                     project_id=project["id"], task_id=original["id"])
+        for scope, key, request, response in [
+            ("/api/tasks", "legacy-create", {"reason": REASON, **create_body}, original),
+            (f"/api/tasks/{original['id']}", "legacy-patch", {"reason": REASON, "expected_version": 1, "changes": patch_changes}, updated),
+        ]:
+            db.execute("INSERT INTO idempotency VALUES (?,?,?,?,?)", ("human", scope, key,
+                       json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False), json.dumps(response)))
+
+    def snapshot():
+        with store.connect() as db:
+            return {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+                    for table in ["projects", "sections", "tasks", "events", "notes", "agents", "idempotency"]}
+
+    before = snapshot()
+    restarted = create_app(tmp_path)
+    with TestClient(restarted, base_url="http://127.0.0.1:8000") as client:
+        details = client.get(f"/api/tasks/{original['id']}").json()
+        assert details["task"] == {**updated, "task_type": "other"}
+        assert details["notes"] == [note]
+        assert all("task_type" not in event["after"] for event in details["events"] if event["entity_type"] == "task")
+        board = client.get(f"/api/projects/{project['id']}").json()
+        assert board["tasks"] == [{**updated, "task_type": "other"}] and board["sections"] == [section]
+        exported = client.get(f"/api/projects/{project['id']}/export").json()
+        assert exported["tasks"] == board["tasks"] and exported["notes"] == [note]
+        assert post(client, "/api/tasks", {**create_body, "idempotency_key": "legacy-create"}) == {**original, "task_type": "other"}
+        retry = client.patch(f"/api/tasks/{original['id']}", headers=BROWSER, json={"expected_version": 1,
+              "changes": {"title": updated["title"]}, "reason": REASON, "idempotency_key": "legacy-patch"})
+        assert retry.status_code == 200 and retry.json() == {**updated, "task_type": "other"}
+        post(client, "/api/tasks", {**create_body, "task_type": "research", "idempotency_key": "legacy-create"}, expected=409)
+        assert snapshot() == before and store.credentials_file.read_bytes() == credentials_before
+        changed = patch(client, details["task"], {"task_type": "bugfix"})
+        assert changed["id"] == original["id"] and changed["section_id"] == section["id"] and changed["version"] == 3
+        assert client.get(f"/api/tasks/{original['id']}").json()["notes"] == [note]
+        with store.connect() as db:
+            assert [tuple(row) for row in db.execute("SELECT * FROM events WHERE id<=3 ORDER BY id")] == before["events"]

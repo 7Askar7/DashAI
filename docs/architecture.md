@@ -4,7 +4,7 @@
 
 ## Граница продукта
 
-Локальный общий dashboard, а не среда исполнения моделей. Человек, Codex и Claude Code создают проекты, разделы крупных задач и карточки, читают контекст и сохраняют действия с причинами. Продукт не запускает модели и не требует ключей OpenAI/Anthropic. Интерфейс на русском. Статусы: `backlog`, `in_progress`, `review`, `done`, `blocked`.
+Локальный общий dashboard, а не среда исполнения моделей. Человек, Codex и Claude Code создают проекты и карточки на общей доске проекта, выбирают тип работы, читают контекст и сохраняют действия с причинами. Продукт не запускает модели и не требует ключей OpenAI/Anthropic. Интерфейс на русском. Статусы: `backlog`, `in_progress`, `review`, `done`, `blocked`.
 
 React + TypeScript + Vite; FastAPI + Python stdlib SQLite; официальный Python MCP SDK со stdio transport. MCP процессы обращаются к единому HTTP API и не открывают SQLite. Production FastAPI отдает собранный `dist/`; dev Vite проксирует `/api`. Сервер слушает только `127.0.0.1:4242`.
 
@@ -12,7 +12,7 @@ React + TypeScript + Vite; FastAPI + Python stdlib SQLite; официальны�
 
 - Project: `id`, `name`, `description`, `repository`, `color`, `version`, `created_at`, `updated_at`.
 - Section: `id`, `project_id`, `title`, `description`, `position`, `version`, `created_at`.
-- Task: `id`, `short_id` (AD-001), `project_id`, `section_id`, `title`, `description`, `rationale`, `acceptance_criteria` (текст), `status`, `priority` (`urgent/high/medium/low`), `assignee_id` (nullable), `depends_on` (список task IDs), `version`, `claim_owner_id`, `claim_expires_at`, `created_at`, `updated_at`.
+- Task: `id`, `short_id` (AD-001), `project_id`, `section_id` (совместимость хранения), `task_type` (`research/development/testing/bugfix/documentation/other`), `title`, `description`, `rationale`, `acceptance_criteria` (текст), `status`, `priority` (`urgent/high/medium/low`), `assignee_id` (nullable), `depends_on` (список task IDs), `version`, `claim_owner_id`, `claim_expires_at`, `created_at`, `updated_at`.
 - Agent: `id`, `name`, `kind` (`human/codex/claude`), `last_seen` (nullable), `created_at`. Не выдавать token hash.
 - Event: `id` (монотонный integer), `project_id`, `task_id` (nullable), `entity_type`, `entity_id`, `action`, `actor_id`, `actor_name`, `actor_kind`, `reason`, `before`, `after`, `created_at`, `session_id` (nullable). Event append-only; создание/изменение и event в одной транзакции.
 - Note: `id`, `task_id`, `kind` (`progress/decision/evidence/comment/change`), `body`, `actor_id`, `created_at`, `metadata` (JSON). Для `change` metadata содержит files, diff, commit и verification. Добавление note порождает event.
@@ -28,9 +28,9 @@ React + TypeScript + Vite; FastAPI + Python stdlib SQLite; официальны�
 - `PATCH /api/projects/{id}` body `{expected_version, changes: {name?, description?, repository?, color?}, reason}` → Project.
 - `POST /api/projects/{id}/sections` body `{title, description?, reason, idempotency_key?}` → Section.
 - `PATCH /api/sections/{id}` body `{expected_version, changes: {title?, description?}, reason}` → Section.
-- `POST /api/tasks` body `{project_id, section_id, title, description?, rationale, acceptance_criteria?, priority?, assignee_id?, depends_on?, reason, idempotency_key?}` → Task.
+- `POST /api/tasks` body `{project_id, section_id?, task_type?: 'other', title, description?, rationale, acceptance_criteria?, priority?, assignee_id?, depends_on?, reason, idempotency_key?}` → Task. Без section_id задача создается сразу в проекте.
 - `GET /api/tasks/{id}` → `{task: Task, events: Event[], notes: Note[]}`.
-- `PATCH /api/tasks/{id}` body `{expected_version, changes: {...}, reason, idempotency_key?}` → Task. Разрешенные fields: title, description, rationale, acceptance_criteria, status, priority, assignee_id, section_id, depends_on. `done` требует критерии и хотя бы одну evidence note; unfinished dependencies запрещают in_progress/review/done. Граф dependencies ацикличный и внутри проекта.
+- `PATCH /api/tasks/{id}` body `{expected_version, changes: {...}, reason, idempotency_key?}` → Task. Разрешенные fields: title, description, rationale, acceptance_criteria, status, priority, task_type, assignee_id, section_id, depends_on. `task_type: null` запрещен; пропущенное поле не изменяется. `done` требует критерии и хотя бы одну evidence note; unfinished dependencies запрещают in_progress/review/done. Граф dependencies ацикличный и внутри проекта.
 - `POST /api/tasks/{id}/claim` body `{expected_version, reason, lease_seconds?: 3600, idempotency_key?}` → Task. Атомарно резервирует исполнение за authenticated agent, выставляет in_progress/assignee. Живая чужая аренда запрещает агенту писать задачу. Человек может вмешаться с обязательной причиной.
 - `POST /api/tasks/{id}/notes` body `{kind, body, reason, idempotency_key?}` → Note.
 - `POST /api/tasks/{id}/changes` body `{summary, files: string[], diff?, commit?, verification?, reason, idempotency_key?}` → Note(kind=change). Это явная запись code change от агента: файлы, diff/commit и что проверено. Tracker не наблюдает filesystem автоматически и не утверждает, что проверки запущены самим dashboard. Агент должен вызвать log_change после существенного изменения; реальные checks дополнительно сохраняет как evidence.
@@ -67,8 +67,14 @@ Desktop резервирует собственный socket на 127.0.0.1, н�
 
 ## Kanban 1.2
 
-Основной вид — единая доска всего выбранного проекта: пять самостоятельных колонок статусов, одна карточка в колонке текущего статуса. Раздел сохраняется как метка на карточке и фильтр. Список по разделам остается отдельным переключаемым видом для просмотра и редактирования разделов. Фильтр статуса используется только в списке; на Kanban статусы уже представлены колонками.
+Основной вид — единая доска всего выбранного проекта: пять самостоятельных колонок статусов, одна карточка в колонке текущего статуса. В 1.3 пользовательские разделы удалены из UI; тип работы указан меткой на карточке и доступен как фильтр. Список всех задач остается отдельным переключаемым видом. Фильтр статуса используется только в списке; на Kanban статусы уже представлены колонками.
 
 Desktop показывает колонки с отдельными вертикальными прокрутками; меньшая ширина допускает горизонтальную прокрутку внутри доски. На экранах до 760 px кнопки статусов со счетчиками показывают одну выбранную колонку, без превращения доски в общий плоский список. Все перемещения доступны через native select, в том числе без мыши; desktop дополнительно использует native HTML drag-and-drop.
 
 Drop или выбор нового статуса открывает подтверждение с обязательной причиной. До успешного PATCH карточка остается на месте. Запрос меняет только `status`, передает исходную `expected_version` и стабильный ключ повторной попытки; domain checks, ownership, dependencies и evidence работают через тот же API, что и у MCP. При stale conflict нужно явно перечитать данные и подтвердить намерение снова; причина сохраняется, чужие поля не переписываются. Отмена не изменяет данные и не добавляет событий.
+
+## Типы задач 1.3
+
+UI create/edit предлагает native select «Тип задачи»: Исследование, Разработка, Тестирование, Исправление, Документация, Другое. Новая UI-карточка имеет default development; HTTP/MCP default other обеспечивает совместимость старых клиентов. Смена типа фиксируется обычным task.updated с причиной, before/after и version. Status-only PATCH сохраняет тип. Export, get_task, get_board и ready_tasks возвращают тип.
+
+SQLite schema/FKs остаются прежними. Старые payload без task_type читаются как other; при чтении исходные строки задач, notes, events и cached idempotency не переписываются. Старый тип не угадывается по названию раздела. При новом create_task без section_id служебная группа project-board:<project_id> создается в той же транзакции, что task и audit; UI не требует настройки разделов. Ее truthful section.created с is_default показывается как «подготовил доску проекта». Прежние section API/MCP, IDs и export сохраняются для старых клиентов. Старые cached create/patch requests сравниваются с учетом default нового поля, а ответы получают read-time fallback; повтор успешного запроса до обновления не создает вторую задачу или audit.

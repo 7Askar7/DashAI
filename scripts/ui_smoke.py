@@ -59,13 +59,18 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 dialog.get_by_label('Цель проекта').fill('Реальная проверка интерфейса на отдельной базе')
                 dialog.get_by_role('button',name='Создать',exact=True).click()
                 expect(page.get_by_role('heading',name='Browser QA')).to_be_visible()
-                page.get_by_role('button',name='Первый раздел').click()
-                dialog.get_by_label('Название раздела').fill('Платформа')
-                dialog.get_by_label('Цель раздела').fill('Проверяем основной workflow')
-                dialog.get_by_role('button',name='Создать',exact=True).click()
+                expect(page.get_by_role('button',name='Первый раздел')).to_have_count(0)
+                expect(page.get_by_role('combobox',name='Фильтр раздела')).to_have_count(0)
+                expect(page.locator('.kanban-column')).to_have_count(5)
                 expect(page.get_by_role('button',name='Новая задача',exact=True)).to_be_visible()
                 page.get_by_role('button',name='Новая задача',exact=True).click()
                 dialog.get_by_label('Название задачи').fill('Проверить сохранение правок')
+                task_type=dialog.get_by_role('combobox',name='Тип задачи',exact=True)
+                assert set(task_type.locator('option').evaluate_all('items => items.map(item => item.value)')) == {
+                    'research','development','testing','bugfix','documentation','other'}
+                expect(task_type).to_have_value('development')
+                task_type.select_option('research')
+                expect(dialog.get_by_role('combobox',name='Раздел',exact=True)).to_have_count(0)
                 dialog.get_by_label('Что нужно сделать').fill('Original description')
                 dialog.get_by_label('Зачем это нужно').fill('Сохранить контекст и изменения без потерь')
                 dialog.get_by_label('Критерии готовности').fill('Форма сохраняется, reload не теряет данные')
@@ -73,7 +78,47 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(dialog.get_by_role('heading',name='Проверить сохранение правок')).to_be_visible()
                 project=request('/bootstrap')['projects'][0]
                 task=request('/projects/'+project['id'])['tasks'][0]
-                checks.append('project/section/task creation through UI persists in SQLite')
+                assert task['task_type']=='research'
+                expect(dialog.locator('.task-properties').get_by_text('Исследование',exact=True)).to_be_visible()
+                checks.append('fresh project creates a typed task directly without a section gate')
+
+                header_edit=dialog.locator('.task-detail-heading').get_by_role('button')
+                before_cancel=request('/tasks/'+task['id'])
+                for width in (1440,390,320):
+                    page.set_viewport_size({'width':width,'height':1000 if width==1440 else 844})
+                    dialog.get_by_role('button',name='Изменить статус или детали').click()
+                    expect(header_edit).to_be_focused()
+                    type_picker=dialog.get_by_role('combobox',name='Тип задачи',exact=True)
+                    type_picker.select_option('testing')
+                    type_picker.focus()
+                    page.keyboard.press('Alt+ArrowDown')
+                    page.keyboard.press('Escape')
+                    expect(dialog).to_be_visible()
+                    expect(type_picker).to_be_focused()
+                    dialog.get_by_role('button',name='Отмена',exact=True).click()
+                    expect(header_edit).to_be_focused()
+                    expect(type_picker).to_have_count(0)
+                    assert request('/tasks/'+task['id'])==before_cancel
+                page.set_viewport_size({'width':1440,'height':1000})
+                checks.append('1440px/390px/320px native type-popup Escape and edit cancellation preserve dialog, focus and data')
+
+                page.get_by_role('button',name='Изменить статус или детали').click()
+                dialog.get_by_role('combobox',name='Тип задачи',exact=True).select_option('bugfix')
+                type_reason='Уточняем тип работы: исправляем выявленную ошибку'
+                dialog.get_by_label('Почему меняем задачу').fill(type_reason)
+                dialog.get_by_role('button',name='Сохранить',exact=True).click()
+                expect(dialog.locator('.task-properties').get_by_text('Исправление',exact=True)).to_be_visible()
+                expect(header_edit).to_be_focused()
+                typed=request('/tasks/'+task['id'])
+                type_events=[event for event in typed['events'] if event['reason']==type_reason]
+                assert typed['task']['task_type']=='bugfix' and len(type_events)==1
+                assert type_events[0]['before']['task_type']=='research' and type_events[0]['after']['task_type']=='bugfix'
+                type_event=dialog.locator('.timeline-event').filter(has_text=type_reason)
+                type_event.locator('summary').click()
+                expect(type_event.get_by_text('Тип задачи',exact=True)).to_be_visible()
+                expect(type_event.get_by_text('Исследование',exact=True)).to_be_visible()
+                expect(type_event.get_by_text('Исправление',exact=True)).to_be_visible()
+                checks.append('task type editing stores its reason and before/after history atomically')
 
                 page.get_by_role('button',name='Изменить статус или детали').click()
                 dialog.get_by_label('Статус',exact=True).select_option('done')
@@ -82,6 +127,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(dialog.get_by_role('alert')).to_contain_text('проверки')
                 assert request('/tasks/'+task['id'])['task']['status']=='backlog'
                 dialog.get_by_role('button',name='Отмена',exact=True).click()
+                expect(header_edit).to_be_focused()
                 dialog.get_by_label('Добавить запись',exact=True).select_option('evidence')
                 dialog.get_by_label('Что проверили и какой результат').fill('Browser integration: creation and persistence passed')
                 dialog.get_by_label('Почему добавляем запись').fill('Подтверждение перед завершением')
@@ -107,7 +153,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 dialog.get_by_role('button',name='Сохранить',exact=True).click()
                 expect(dialog.locator('.task-properties .priority')).to_contain_text('Высокий')
                 final=request('/tasks/'+task['id'])['task']
-                assert final['description']=='Fresh concurrent description' and final['priority']=='high'
+                assert final['description']=='Fresh concurrent description' and final['priority']=='high' and final['task_type']=='bugfix'
                 checks.append('stale edit conflict keeps draft and never overwrites untouched concurrent fields')
 
                 dialog.get_by_label('Добавить запись',exact=True).select_option('change')
@@ -122,6 +168,11 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(page.get_by_role('dialog')).to_have_count(0)
                 checks.append('structured code change and native dialog Escape')
 
+                page.locator('.project-tabs').get_by_role('button',name='История').click()
+                expect(page.get_by_text('подготовил доску проекта',exact=True)).to_be_visible()
+                expect(page.get_by_text('создал раздел',exact=True)).to_have_count(0)
+                page.locator('.project-tabs').get_by_role('button',name='Доска').click()
+
                 search=page.get_by_role('textbox',name='Поиск задач в проекте')
                 search.fill('несуществующая')
                 expect(page.get_by_role('heading',name='Задачи не найдены')).to_be_visible()
@@ -129,13 +180,16 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(page.locator('.kanban-card')).to_have_count(1)
                 page.reload()
                 expect(page.locator('.kanban-card')).to_have_count(1)
+                expect(page.locator('.kanban-card').get_by_text('Исправление',exact=True)).to_be_visible()
                 with page.expect_download() as download:
                     page.get_by_role('button',name='Экспортировать проект').click()
                 export_path=ARTIFACTS/'browser-export.json'
                 download.value.save_as(export_path)
                 exported=json.loads(export_path.read_text(encoding='utf-8'))
                 assert len(exported['events'])>=7 and len(exported['notes'])==2 and 'token' not in exported
-                checks.append('search/reset, reload persistence and full project export')
+                assert exported['tasks'][0]['id']==task['id'] and exported['tasks'][0]['task_type']=='bugfix'
+                assert any(event['reason']==type_reason for event in exported['events'])
+                checks.append('search/reset, typed card reload persistence and full history export')
                 page.screenshot(path=str(ARTIFACTS/'ui-smoke-desktop.png'),full_page=True)
                 for width in (390,320):
                     page.set_viewport_size({'width':width,'height':844})
@@ -143,6 +197,8 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                     expect(page.locator('.kanban-column:visible')).to_have_count(1)
                     expect(page.locator('.kanban-card:visible')).to_have_count(1)
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'reflow failed at {width}px'
+                    page.evaluate('window.scrollTo(0, 0)')
+                    expect(page.locator('.toast')).to_have_text('')
                     page.screenshot(path=str(ARTIFACTS/f'ui-smoke-mobile-{width}.png'),full_page=True)
                 checks.append('390px/320px board reflow')
                 page.get_by_role('button',name='Открыть меню').click()

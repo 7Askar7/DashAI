@@ -14,7 +14,6 @@ import {
   Blocks,
   Check,
   CheckCheck,
-  ChevronDown,
   ChevronRight,
   Circle,
   Clipboard,
@@ -42,6 +41,7 @@ import {
   date,
   statuses,
   priorities,
+  taskTypes,
   noteLabels,
   actionLabels,
   type Agent,
@@ -51,7 +51,6 @@ import {
   type Detail,
   type Event,
   type Project,
-  type Section,
   type Task,
   type Status,
 } from "./api";
@@ -60,8 +59,7 @@ import KanbanBoard from "./KanbanBoard";
 type View = "overview" | "board" | "project_history" | "history" | "connectors";
 type Modal =
   | { kind: "project"; project?: Project }
-  | { kind: "section"; section?: Section }
-  | { kind: "task"; sectionId?: string };
+  | { kind: "task" };
 const emptyBootstrap: Bootstrap = { projects: [], agents: [], activity: [] };
 const text = (data: FormData, key: string) =>
   String(data.get(key) || "").trim();
@@ -69,7 +67,7 @@ const agentName = (agents: Agent[], id: string | null) =>
   agents.find((a) => a.id === id)?.name || "Не назначен";
 const kindLabel = (kind: string) =>
   kind === "human" ? "Человек" : kind === "claude" ? "Claude Code" : "Codex";
-const fieldLabels:Record<string,string> = {title:'Название',description:'Описание',rationale:'Зачем',acceptance_criteria:'Критерии готовности',status:'Статус',priority:'Приоритет',assignee_id:'Исполнитель',section_id:'Раздел',depends_on:'Зависимости',claim_owner_id:'Владелец'};
+const fieldLabels:Record<string,string> = {title:'Название',description:'Описание',rationale:'Зачем',acceptance_criteria:'Критерии готовности',status:'Статус',priority:'Приоритет',task_type:'Тип задачи',assignee_id:'Исполнитель',section_id:'Раздел',depends_on:'Зависимости',claim_owner_id:'Владелец'};
 
 function Avatar({ agent, small = false }: { agent?: Agent; small?: boolean }) {
   return (
@@ -313,22 +311,13 @@ function EntityForm({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const key = useRef(crypto.randomUUID());
-  const isProject = modal.kind === "project",
-    isSection = modal.kind === "section";
-  const item = isProject
-    ? modal.project
-    : isSection
-      ? modal.section
-      : undefined;
+  const isProject = modal.kind === "project";
+  const item = isProject ? modal.project : undefined;
   const title = isProject
     ? item
       ? "Изменить проект"
       : "Новый проект"
-    : isSection
-      ? item
-        ? "Изменить раздел"
-        : "Новый раздел"
-      : "Новая задача";
+    : "Новая задача";
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError("");
@@ -355,31 +344,12 @@ function EntityForm({
           },
         );
         await onSaved(result.id);
-      } else if (modal.kind === "section") {
-        const changes = {
-          title: text(d, "title"),
-          description: text(d, "description"),
-        };
-        await api(
-          modal.section
-            ? `/sections/${modal.section.id}`
-            : `/projects/${board!.project.id}/sections`,
-          {
-            method: modal.section ? "PATCH" : "POST",
-            body: JSON.stringify(
-              modal.section
-                ? { expected_version: modal.section.version, changes, reason }
-                : { ...changes, reason, idempotency_key: key.current },
-            ),
-          },
-        );
-        await onSaved();
       } else {
         const task = await api<Task>("/tasks", {
           method: "POST",
           body: JSON.stringify({
             project_id: board!.project.id,
-            section_id: text(d, "section_id"),
+            task_type: text(d, "task_type"),
             title: text(d, "title"),
             description: text(d, "description"),
             rationale: text(d, "rationale"),
@@ -406,9 +376,7 @@ function EntityForm({
         <p className="form-intro">
           {isProject
             ? "Отдельная доска, контекст и история для одного проекта."
-            : isSection
-              ? "Крупная задача или направление. Внутри агенты создают свои карточки."
-              : "Опишите результат и зачем он нужен. Агент получит этот контекст вместе с задачей."}
+            : "Выберите тип работы, опишите результат и зачем он нужен. Агент получит этот контекст вместе с задачей."}
         </p>
         {isProject ? (
           <>
@@ -443,32 +411,17 @@ function EntityForm({
               <option value="#f4c580">Песочный</option>
             </Select>
           </>
-        ) : isSection ? (
-          <>
-            <Field
-              label="Название раздела"
-              name="title"
-              required
-              defaultValue={modal.section?.title}
-            />
-            <Field
-              label="Цель раздела"
-              name="description"
-              area
-              defaultValue={modal.section?.description}
-            />
-          </>
         ) : (
           <>
             <Field label="Название задачи" name="title" required />
             <Select
-              label="Раздел проекта"
-              name="section_id"
-              defaultValue={modal.sectionId || board?.sections[0]?.id}
+              label="Тип задачи"
+              name="task_type"
+              defaultValue="development"
             >
-              {board?.sections.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.title}
+              {Object.entries(taskTypes).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
                 </option>
               ))}
             </Select>
@@ -524,9 +477,7 @@ function EntityForm({
               ? "Уточнение контекста проекта"
               : isProject
                 ? "Создание нового проекта"
-                : isSection
-                  ? "Декомпозиция работы проекта"
-                  : "Добавление задачи в план проекта"
+                : "Добавление задачи в план проекта"
           }
         />
         {error && <ErrorBox message={error} />}
@@ -585,7 +536,8 @@ function Events({
               <div className="event-content">
                 <div className="event-title">
                   <strong>{event.actor_name}</strong>{" "}
-                  <span>{actionLabels[event.action] || event.action}</span>
+                  <span>{event.action === "section.created" && event.after?.is_default
+                    ? "подготовил доску проекта" : actionLabels[event.action] || event.action}</span>
                   {event.task_id && onTask && (
                     <button
                       className="event-link"
@@ -632,6 +584,7 @@ function Events({
                                 acceptance_criteria: "Критерии",
                                 status: "Статус",
                                 priority: "Приоритет",
+                                task_type: "Тип задачи",
                                 assignee_id: "Исполнитель",
                                 section_id: "Раздел",
                                 body: "Запись",
@@ -673,6 +626,8 @@ function formatValue(key: string, value: unknown, agents: Agent[]) {
     return statuses.find((s) => s.value === value)?.label || String(value);
   if (key === "priority")
     return priorities[value as keyof typeof priorities] || String(value);
+  if (key === "task_type")
+    return taskTypes[value as keyof typeof taskTypes] || String(value);
   if (key === "assignee_id" || key === "claim_owner_id")
     return agentName(agents, String(value));
   return typeof value === "object"
@@ -702,13 +657,20 @@ function TaskDrawer({
   const task = detail.task,
     key = useRef(crypto.randomUUID()),
     noteKey = useRef(crypto.randomUUID()),
-    editBaseline = useRef(task);
+    editBaseline = useRef(task),
+    editButton = useRef<HTMLButtonElement>(null);
   const [saveVersion, setSaveVersion] = useState(task.version);
   function beginEdit() {
     editBaseline.current = task;
     setSaveVersion(task.version);
     setError("");
     setEdit(true);
+    editButton.current?.focus();
+  }
+  function finishEdit() {
+    editButton.current?.focus();
+    setEdit(false);
+    setError("");
   }
   async function refreshConflict() {
     try {
@@ -743,7 +705,7 @@ function TaskDrawer({
         status: text(d, "status"),
         priority: text(d, "priority"),
         assignee_id: text(d, "assignee_id") || null,
-        section_id: text(d, "section_id"),
+        task_type: text(d, "task_type"),
         depends_on: d.getAll("depends_on"),
       };
       const changes = Object.fromEntries(
@@ -768,7 +730,7 @@ function TaskDrawer({
       });
       key.current = crypto.randomUUID();
       await onChanged();
-      setEdit(false);
+      finishEdit();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -815,8 +777,7 @@ function TaskDrawer({
       setBusy(false);
     }
   }
-  const assignee = agents.find((a) => a.id === task.assignee_id),
-    section = board.sections.find((s) => s.id === task.section_id);
+  const assignee = agents.find((a) => a.id === task.assignee_id);
   return (
     <Dialog title={task.short_id} onClose={onClose} drawer>
       <div className="drawer-body">
@@ -824,17 +785,16 @@ function TaskDrawer({
           <FolderKanban size={13} />
           <span>{board.project.name}</span>
           <ChevronRight size={12} />
-          <span>{section?.title}</span>
+          <span>{taskTypes[task.task_type || "other"]}</span>
         </div>
         <div className="task-detail-heading">
           <h3>{task.title}</h3>
           <button
+            ref={editButton}
             className="icon-button"
             onClick={() => {
-              if (edit) {
-                setEdit(false);
-                setError("");
-              } else beginEdit();
+              if (edit) finishEdit();
+              else beginEdit();
             }}
             aria-label={
               edit ? "Отменить редактирование" : "Редактировать задачу"
@@ -845,6 +805,7 @@ function TaskDrawer({
         </div>
         <div className="task-properties">
           <StatusPill status={task.status} />
+          <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
           <span className={`priority ${task.priority}`}>
             <span className="priority-bars">▂▄▆</span>
             {priorities[task.priority]}
@@ -911,13 +872,13 @@ function TaskDrawer({
                 ))}
               </Select>
               <Select
-                label="Раздел"
-                name="section_id"
-                defaultValue={task.section_id}
+                label="Тип задачи"
+                name="task_type"
+                defaultValue={task.task_type || "other"}
               >
-                {board.sections.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.title}
+                {Object.entries(taskTypes).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </Select>
@@ -967,10 +928,7 @@ function TaskDrawer({
               <button
                 className="button secondary"
                 type="button"
-                onClick={() => {
-                  setEdit(false);
-                  setError("");
-                }}
+                onClick={finishEdit}
               >
                 Отмена
               </button>
@@ -1460,12 +1418,11 @@ export default function App() {
     [toast, setToast] = useState(""),
     [mobileMenu, setMobileMenu] = useState(false);
   const [query, setQuery] = useState(""),
-    [sectionFilter, setSectionFilter] = useState(""),
+    [taskTypeFilter, setTaskTypeFilter] = useState(""),
     [agentFilter, setAgentFilter] = useState(""),
     [statusFilter, setStatusFilter] = useState(""),
     [priorityFilter, setPriorityFilter] = useState(""),
     [listView, setListView] = useState(false),
-    [collapsed, setCollapsed] = useState<string[]>([]),
     [history, setHistory] = useState<Event[]>([]),
     [cursor, setCursor] = useState(0),
     [hasMore, setHasMore] = useState(false),
@@ -1614,7 +1571,7 @@ export default function App() {
     setProjectId(id);
     setView("board");
     setQuery("");
-    setSectionFilter("");
+    setTaskTypeFilter("");
     setAgentFilter("");
     setStatusFilter("");
     setPriorityFilter("");
@@ -1700,14 +1657,14 @@ export default function App() {
   }
   function resetFilters() {
     setQuery("");
-    setSectionFilter("");
+    setTaskTypeFilter("");
     setAgentFilter("");
     setStatusFilter("");
     setPriorityFilter("");
   }
   const filters = !!(
     query ||
-    sectionFilter ||
+    taskTypeFilter ||
     agentFilter ||
     (listView && statusFilter) ||
     priorityFilter
@@ -1715,7 +1672,7 @@ export default function App() {
   const tasks =
     board?.tasks.filter(
       (t) =>
-        (!sectionFilter || t.section_id === sectionFilter) &&
+        (!taskTypeFilter || (t.task_type || "other") === taskTypeFilter) &&
         (!agentFilter ||
           (agentFilter === "unassigned"
             ? !t.assignee_id
@@ -1723,13 +1680,10 @@ export default function App() {
         (!listView || !statusFilter || t.status === statusFilter) &&
         (!priorityFilter || t.priority === priorityFilter) &&
         (!query ||
-          `${t.short_id} ${t.title} ${t.description} ${t.rationale}`
+          `${t.short_id} ${t.title} ${t.description} ${t.rationale} ${taskTypes[t.task_type || "other"]}`
             .toLocaleLowerCase("ru")
             .includes(query.toLocaleLowerCase("ru"))),
     ) || [];
-  const visibleSections =
-    board?.sections.filter((s) => !sectionFilter || s.id === sectionFilter) ||
-    [];
   const isProjectView = view === "board" || view === "project_history";
   const project = board?.project;
   return (
@@ -1933,7 +1887,7 @@ export default function App() {
                   <span className="heading-dot">.</span>
                 </h1>
                 <p>
-                  Создайте доску. Разделите работу на направления.
+                  Создайте проект и добавьте задачи на общую доску.
                   <br />
                   Дайте агентам задачи и сохраните, что сделано и почему.
                 </p>
@@ -2081,16 +2035,10 @@ export default function App() {
                   </button>
                   <button
                     className="button primary"
-                    onClick={() =>
-                      setModal(
-                        board.sections.length
-                          ? { kind: "task" }
-                          : { kind: "section" },
-                      )
-                    }
+                    onClick={() => setModal({ kind: "task" })}
                   >
                     <Plus size={17} />
-                    {board.sections.length ? "Новая задача" : "Первый раздел"}
+                    Новая задача
                   </button>
                 </div>
               </div>
@@ -2098,10 +2046,6 @@ export default function App() {
                 <span>
                   <Circle size={13} />
                   <strong>{board.tasks.length}</strong> задач
-                </span>
-                <span>
-                  <PanelTop size={13} />
-                  <strong>{board.sections.length}</strong> разделов
                 </span>
                 <span className="stat-active">
                   <Activity size={13} />
@@ -2189,14 +2133,14 @@ export default function App() {
                     </div>
                     <div className="filter-controls">
                       <select
-                        aria-label="Фильтр раздела"
-                        value={sectionFilter}
-                        onChange={(e) => setSectionFilter(e.target.value)}
+                        aria-label="Фильтр типа задачи"
+                        value={taskTypeFilter}
+                        onChange={(e) => setTaskTypeFilter(e.target.value)}
                       >
-                        <option value="">Все разделы</option>
-                        {board.sections.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.title}
+                        <option value="">Все типы</option>
+                        {Object.entries(taskTypes).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
                           </option>
                         ))}
                       </select>
@@ -2266,168 +2210,57 @@ export default function App() {
                       </button>
                     </div>
                   )}
-                  {!board.sections.length ? (
-                    <div className="empty-board">
-                      <PanelTop size={28} />
-                      <h2>Разделите проект на направления</h2>
-                      <p>
-                        Каждый раздел — своя часть доски для большой задачи.
-                      </p>
-                      <button
-                        className="button secondary"
-                        onClick={() => setModal({ kind: "section" })}
-                      >
-                        <Plus size={15} />
-                        Создать раздел
-                      </button>
-                    </div>
-                  ) : filters && !tasks.length ? (
+                  {filters && !tasks.length ? (
                     <div className="empty-board">
                       <Search size={26} />
                       <h2>Задачи не найдены</h2>
                       <p>Попробуйте другой запрос или уберите фильтры.</p>
-                      <button
-                        className="button secondary"
-                        onClick={resetFilters}
-                      >
+                      <button className="button secondary" onClick={resetFilters}>
                         Сбросить фильтры
                       </button>
                     </div>
+                  ) : !listView ? (
+                    <KanbanBoard key={board.project.id} tasks={tasks} agents={bootstrap.agents}
+                      onOpen={openTask} onMove={(task, status) => setMove({ task, status })} />
                   ) : (
-                    !listView ? <KanbanBoard key={board.project.id} tasks={tasks} agents={bootstrap.agents} sections={board.sections}
-                      onOpen={openTask} onMove={(task, status) => setMove({ task, status })} /> : (
                     <div className="board is-list">
-                      {visibleSections.map((section, index) => {
-                        const sectionTasks = tasks.filter((task) => task.section_id === section.id),
-                          isCollapsed = collapsed.includes(section.id);
-                        return <section className="board-section" key={section.id}>
-                            <div className="section-header">
-                              <button
-                                className="section-toggle"
-                                aria-expanded={!isCollapsed}
-                                onClick={() =>
-                                  setCollapsed((prev) =>
-                                    isCollapsed
-                                      ? prev.filter((id) => id !== section.id)
-                                      : [...prev, section.id],
-                                  )
-                                }
-                              >
-                                <ChevronDown
-                                  size={15}
-                                  className={isCollapsed ? "collapsed" : ""}
-                                />
-                                <span className="section-index">
-                                  {String(index + 1).padStart(2, "0")}
+                      <div className="task-list"><div className="list-items">
+                        {tasks.map((task) => {
+                          const agent = bootstrap.agents.find((item) => item.id === task.assignee_id);
+                          return (
+                            <button className={`task-card ${task.status}`} key={task.id} onClick={() => openTask(task.id)}>
+                              <div className="task-card-top">
+                                <span className="task-id">{task.short_id}</span>
+                                <span className={`priority-symbol ${task.priority}`} title={`Приоритет: ${priorities[task.priority]}`}>
+                                  <span aria-hidden="true">▂▄▆</span>
+                                  <span className="sr-only">{priorities[task.priority]}</span>
                                 </span>
-                                <strong>{section.title}</strong>
-                                <span className="count">
-                                  {sectionTasks.length}
-                                </span>
-                              </button>
-                              <div className="section-header-actions">
-                                <button
-                                  className="icon-button"
-                                  onClick={() =>
-                                    setModal({ kind: "section", section })
-                                  }
-                                  aria-label={`Редактировать раздел ${section.title}`}
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                                <button
-                                  className="icon-button"
-                                  onClick={() =>
-                                    setModal({
-                                      kind: "task",
-                                      sectionId: section.id,
-                                    })
-                                  }
-                                  aria-label={`Добавить задачу в ${section.title}`}
-                                >
-                                  <Plus size={16} />
-                                </button>
                               </div>
-                            </div>
-                            {!isCollapsed && <>
-                              {section.description && <p className="section-description">{section.description}</p>}
-                              <div className="task-list"><div className="list-items">
-                                {sectionTasks.map((task) => {
-                                  const agent = bootstrap.agents.find((item) => item.id === task.assignee_id);
-                                  return (
-                                              <button
-                                                className={`task-card ${task.status}`}
-                                                key={task.id}
-                                                onClick={() =>
-                                                  openTask(task.id)
-                                                }
-                                              >
-                                                <div className="task-card-top">
-                                                  <span className="task-id">
-                                                    {task.short_id}
-                                                  </span>
-                                                  <span
-                                                    className={`priority-symbol ${task.priority}`}
-                                                    title={`Приоритет: ${priorities[task.priority]}`}
-                                                  >
-                                                    <span aria-hidden="true">
-                                                      ▂▄▆
-                                                    </span>
-                                                    <span className="sr-only">
-                                                      {
-                                                        priorities[
-                                                          task.priority
-                                                        ]
-                                                      }
-                                                    </span>
-                                                  </span>
-                                                </div>
-                                                <h3>{task.title}</h3>
-                                                <p className="task-rationale">
-                                                  {task.rationale}
-                                                </p>
-                                                <StatusPill status={task.status} />
-                                                <div className="task-card-footer">
-                                                  <span className="card-assignee">
-                                                    <Avatar
-                                                      agent={agent}
-                                                      small
-                                                    />
-                                                    <span>
-                                                      {agentName(
-                                                        bootstrap.agents,
-                                                        task.assignee_id,
-                                                      )}
-                                                    </span>
-                                                  </span>
-                                                  <span
-                                                    className="card-meta"
-                                                    title={`Обновлено ${date(task.updated_at, true)}`}
-                                                  >
-                                                    <span>v{task.version}</span>
-                                                    {task.depends_on.length >
-                                                      0 && (
-                                                      <GitBranch size={12} />
-                                                    )}
-                                                  </span>
-                                                </div>
-                                              </button>
-                                  );
-                                })}
-                              </div></div>
-                            </>}
-                          </section>;
-                      })}
+                              <div className="task-list-heading">
+                                <h3>{task.title}</h3>
+                                <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
+                              </div>
+                              <StatusPill status={task.status} />
+                              <div className="task-card-footer">
+                                <span className="card-assignee">
+                                  <Avatar agent={agent} small />
+                                  <span>{agentName(bootstrap.agents, task.assignee_id)}</span>
+                                </span>
+                                <span className="card-meta" title={`Обновлено ${date(task.updated_at, true)}`}>
+                                  <span>v{task.version}</span>
+                                  {task.depends_on.length > 0 && <GitBranch size={12} />}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div></div>
+                      {!tasks.length && <div className="empty-board">
+                        <h2>Пока нет задач</h2>
+                        <p>Нажмите «Новая задача», чтобы добавить первую карточку.</p>
+                      </div>}
                     </div>
-                    )
                   )}
-                  <button
-                    className="add-section"
-                    onClick={() => setModal({ kind: "section" })}
-                  >
-                    <Plus size={15} />
-                    Добавить раздел проекта
-                  </button>
                   <div className="board-footnote">
                     <span>
                       <ShieldCheck size={13} />

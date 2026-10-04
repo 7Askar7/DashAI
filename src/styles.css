@@ -102,7 +102,6 @@ code,
 pre,
 kbd,
 .task-id,
-.section-index,
 .version-line,
 .event-meta,
 .project-version,
@@ -857,63 +856,6 @@ button:focus:not(:focus-visible) {
 .status-dot.offline {
   background: #fba7a7;
 }
-.board-section {
-  border-top: 1px solid #283440;
-  padding-top: 3px;
-  margin-bottom: 23px;
-  min-width: 0;
-}
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 43px;
-  padding: 0 4px;
-}
-.section-toggle {
-  display: flex;
-  gap: 9px;
-  align-items: center;
-  font-size: 13px;
-  padding: 7px 0;
-  color: #dce5ef;
-  text-align: left;
-}
-.section-toggle > svg {
-  color: #8c9eb1;
-  transition: transform 0.15s;
-}
-.section-toggle > svg.collapsed {
-  transform: rotate(-90deg);
-}
-.section-toggle strong {
-  font-weight: 550;
-}
-.section-index {
-  font-size: 10px;
-  letter-spacing: 0.3px;
-  color: #8f9fb3;
-}
-.section-toggle .count {
-  font-size: 8px;
-  min-width: 17px;
-  padding: 0 4px;
-  line-height: 15px;
-  margin-left: 3px;
-}
-.section-header-actions {
-  display: flex;
-  gap: 2px;
-}
-.section-header-actions .icon-button {
-  width: 28px;
-  height: 28px;
-}
-.section-description {
-  padding: 0 4px 12px;
-  color: #91a2b5;
-  font-size: 12px;
-}
 .task-card {
   padding: 14px 13px 12px;
   width: 100%;
@@ -986,16 +928,6 @@ button:focus:not(:focus-visible) {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.task-rationale {
-  margin-top: 8px;
-  font-size: 12px;
-  line-height: 1.7;
-  color: #9eacbe;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 .task-card-footer {
   display: flex;
   align-items: center;
@@ -1024,25 +956,6 @@ button:focus:not(:focus-visible) {
   font-size: 10px;
   color: #8e9fb4;
   font-family: Consolas, monospace;
-}
-.add-section {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  width: 100%;
-  min-height: 37px;
-  border: 1px dashed #3c4b5d;
-  background: #121922;
-  border-radius: 7px;
-  color: #abbacc;
-  font-size: 10px;
-  margin: 5px 0 21px;
-}
-.add-section:hover {
-  border-color: #8bac82;
-  color: var(--accent);
-  background: #17221c;
 }
 .board-footnote {
   display: flex;
@@ -1076,9 +989,6 @@ button:focus:not(:focus-visible) {
 .is-list .task-card-top {
   margin: 0;
 }
-.is-list .task-rationale {
-  display: none;
-}
 .is-list .task-card-footer {
   padding: 0;
   margin: 0;
@@ -1086,6 +996,16 @@ button:focus:not(:focus-visible) {
 }
 .is-list .task-card h3 {
   -webkit-line-clamp: 2;
+}
+.task-list-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.board.is-list {
+  margin-bottom: 24px;
 }
 .empty-board {
   border: 1px dashed #35465a;
@@ -2205,9 +2125,6 @@ button:focus:not(:focus-visible) {
   .task-card h3 {
     font-size: 14px;
   }
-  .task-rationale {
-    font-size: 12px;
-  }
   .task-id {
     font-size: 11px;
   }
@@ -2490,10 +2407,6 @@ button:focus:not(:focus-visible) {
   .board .task-card h3 {
     font-size: 14px;
   }
-  .board .task-rationale {
-    font-size: 12px;
-    -webkit-line-clamp: 2;
-  }
   .board .task-id {
     font-size: 11px;
   }
@@ -2539,33 +2452,6 @@ button:focus:not(:focus-visible) {
   .board .priority-symbol {
     margin-right: 100px;
   }
-  .board .section-header {
-    min-height: 44px;
-  }
-  .board .section-toggle {
-    font-size: 13px;
-    gap: 7px;
-    min-width: 0;
-    flex: 1;
-  }
-  .section-toggle strong {
-    overflow-wrap: anywhere;
-    min-width: 0;
-  }
-  .board .section-description {
-    font-size: 12px;
-    line-height: 1.8;
-  }
-  .section-header-actions {
-    gap: 1px;
-  }
-  .section-header-actions .icon-button {
-    width: 30px;
-    height: 34px;
-  }
-  .board .board-section {
-    margin-bottom: 25px;
-  }
   .board.is-list .task-card {
     display: flex;
     align-items: stretch;
@@ -2585,9 +2471,6 @@ button:focus:not(:focus-visible) {
     gap: 8px;
     font-size: 10px;
     line-height: 1.8;
-  }
-  .add-section {
-    min-height: 43px;
   }
   .page-heading {
     flex-direction: column;

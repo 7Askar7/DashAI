@@ -74,25 +74,42 @@ Setup вызывает локальный `POST /api/agents`, сохраняет
 | Tool | Что делает |
 |---|---|
 | `list_projects` | Проекты и известные identities; поиск и пагинация |
-| `get_board` | Проект, секции, task summaries и последние события; фильтры и пагинация |
-| `create_project` / `create_section` | Создание проектной доски и части под крупную задачу |
-| `create_task` | Карточка с rationale, критериями и dependencies |
+| `get_board` | Общая доска проекта, task summaries с типом задачи и последние события; фильтры и пагинация |
+| `create_project` | Создать проектную доску |
+| `create_task` | Создать карточку прямо в проекте с типом, rationale, критериями и dependencies |
 | `ready_tasks` | Незаблокированные backlog/in-progress задачи без живой аренды |
 | `get_task` | Актуальная version, описание, rationale, критерии, recent notes/events |
 | `claim_task` | Атомарно занять задачу или продлить собственную аренду |
-| `update_task` | Изменить поля/статус по актуальной version |
+| `update_task` | Изменить поля, тип или статус по актуальной version |
 | `add_note` | Progress, decision, evidence или comment |
 | `log_change` | История кодовой правки: summary, files, reason, diff/commit, verification |
 | `get_history` | События по возрастанию ID с cursor для продолжения |
 | `connector_status` | Reachability общего API и конфигурация этого connector без секретов |
 
 1. Найдите проект, прочитайте доску и актуальную карточку.
-2. Создайте карточки для новых шагов с целью и criteria. `rationale` — зачем существует задача; `reason` — почему выполняется конкретная запись.
+2. Создайте карточки прямо в проекте для новых шагов с типом задачи, целью и criteria. `rationale` — зачем существует задача; `reason` — почему выполняется конкретная запись.
 3. Вызовите `claim_task` с прочитанной `expected_version`. Только сервер решает, свободна ли работа; результат `ready_tasks` может устареть.
 4. После существенных правок вызовите `log_change`. Инструмент **записывает переданное описание**, не редактирует файлы, не читает Git и не запускает проверки автоматически. Реальные outcomes проверок добавьте `add_note(kind="evidence")`.
 5. Переведите работу в `review`, пригласите независимого критика, сохраните его замечания. Затем явной операцией переведите в `done`; backend требует criteria, evidence и завершенные dependencies. Независимость review — рабочий регламент, а не встроенная автоматическая оценка модели.
 
 Аренда по умолчанию — 3600 секунд (допустимо 30–86400). Продлите ее через `claim_task` с новой version и новым ключом. Чтобы освободить работу, владелец может `update_task` в `backlog`, `blocked` или `review` с конкретной причиной: backend очищает claim при уходе из `in_progress`. Человек может вмешаться в занятую карточку с обязательной причиной. Два агента с одним credential считаются одним actor; для изоляции выдайте разные credentials.
+
+### Тип задачи и совместимость прежних проектов
+
+`create_task` принимает `project_id`, название, rationale и остальные поля карточки; создавать раздел перед задачей не требуется. Поле `task_type` имеет следующие значения:
+
+| `task_type` | В интерфейсе |
+| --- | --- |
+| `research` | Исследование |
+| `development` | Разработка |
+| `testing` | Тестирование |
+| `bugfix` | Исправление |
+| `documentation` | Документация |
+| `other` | Другое |
+
+Если MCP/API клиент не передает `task_type`, используется `other`. Прежние карточки также получают тип «Другое»; в UI новая карточка по умолчанию имеет тип «Разработка». Тип возвращается в карточке и ее summaries. Изменение через `update_task(changes={"task_type": "testing"}, ...)` требует актуальной `expected_version`, причины и нового idempotency key; оно записывается в историю. Тип сохраняется при смене статуса.
+
+`section_id` при создании необязателен и сохранен для совместимости существующих клиентов. Прежние section IDs, данные и история остаются в базе и экспорте; `create_section` и section-параметры чтения доступны старым клиентам. Пользователь работает с одной доской проекта и типами карточек. Connector использует тот же store и тот же validation, что UI.
 
 ## Повторы, ошибки и объем контекста
 
@@ -102,7 +119,7 @@ Setup вызывает локальный `POST /api/agents`, сохраняет
 
 `API_UNREACHABLE` означает, что нужно запустить сервер/проверить URL. `HTTP_401` означает неверный credential. `HTTP_422` означает неподходящие поля или невыполненную политику валидации. Ошибки возвращаются MCP `isError`, а не успешным ответом. Диагностика subprocess идет только в stderr; stdout содержит только MCP protocol messages. HTTP redirects запрещены, чтобы credentials не переходили на другой origin. Connector принимает loopback HTTP origin и отключает наследуемые HTTP proxy settings для API и выпуска tokens.
 
-Reads ограничены: каждая страница списка содержит до 100 entries, board содержит summaries задач и секций, task detail содержит заданное число последних notes/events. Длинные строки обрезаются с явной меткой; сервер продолжает хранить полный текст. `get_history` продолжайте через `after=next_cursor`; проекты и задачи — через `offset=next_offset`. Секции имеют отдельные `section_limit`, `section_offset`, `total_sections` и `next_section_offset`; identities — `agent_limit`, `agent_offset`, `total_agents` и `next_agent_offset`. Чтобы прочитать описание конкретной секции, передайте `get_board(section_id=...)`: ответ добавит `section_context` с ее текстом. Полный журнал и тексты можно открыть в dashboard и JSON export. Коннектор пока получает полный HTTP snapshot локальной доски перед выборкой страницы; объем ответа модели ограничен.
+Reads ограничены: каждая страница списка содержит до 100 entries, board содержит summaries задач с `task_type`, task detail содержит заданное число последних notes/events. Длинные строки обрезаются с явной меткой; сервер продолжает хранить полный текст. `get_history` продолжайте через `after=next_cursor`; проекты и задачи — через `offset=next_offset`. Identities имеют `agent_limit`, `agent_offset`, `total_agents` и `next_agent_offset`. Совместимые section-параметры: `section_limit`, `section_offset`, `total_sections`, `next_section_offset`; `get_board(section_id=...)` добавляет `section_context` с описанием прежнего раздела. Полный журнал и тексты можно открыть в dashboard и JSON export. Коннектор пока получает полный HTTP snapshot локальной доски перед выборкой страницы; объем ответа модели ограничен.
 
 Notes и event snapshots возвращаются как previews с `summary_only` / `snapshots_are_summaries`: body, diff и verification до 500 символов, первые 5 файлов с `files_total` / `files_truncated`. История сохраняет список `changed_fields`, actor, action, reason и IDs. Task summaries показывают первые 10 зависимостей с `depends_on_count` / `depends_on_truncated`; `get_task` возвращает полный список IDs зависимостей одной задачи. Полные тексты, списки файлов и исторические before/after остаются в UI/export. Ответы `add_note`/`log_change` тоже краткие; сокращение ответа не изменяет сохраненные данные.
 

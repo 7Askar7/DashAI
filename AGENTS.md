@@ -6,4 +6,6 @@
 
 Когда MCP `agentboard` доступен: найди проект через `list_projects`, прочитай `get_board`/`get_task`, создай задачу с rationale и acceptance criteria, возьми ее через `claim_task`. После существенной правки вызови `log_change`: summary, files, reason, diff/commit и verification; решения объясни note/decision. Приложи evidence проверки; переведи в review, затем done после проверки. Перед update перечитай version. На conflict перечитай состояние, не повторяй старый overwrite. Reason — описание причины, не скрытые рассуждения модели. Не помещай ключи, пароли и личные данные в историю.
 
+Для новой задачи укажи `project_id` и `task_type`: `research`, `development`, `testing`, `bugfix`, `documentation` или `other`. Создавать раздел не требуется. Все карточки проекта находятся на общей доске по статусам; тип работы не заменяет статус. Старые section-инструменты сохранены для совместимости.
+
 Запуск и проверки смотри в README.md. `data/` и локальные credentials не коммитить. Коннектор обращается к HTTP API; ему запрещено создавать отдельную копию project store.

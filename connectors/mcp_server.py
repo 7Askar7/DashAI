@@ -30,6 +30,7 @@ Version = Annotated[int, Field(ge=1)]
 Limit = Annotated[int, Field(ge=1, le=100)]
 Status = Literal["backlog", "in_progress", "review", "done", "blocked"]
 Priority = Literal["urgent", "high", "medium", "low"]
+TaskType = Literal["research", "development", "testing", "bugfix", "documentation", "other"]
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 
@@ -54,6 +55,7 @@ class TaskChanges(BaseModel):
     acceptance_criteria: Description | None = None
     status: Status | None = None
     priority: Priority | None = None
+    task_type: TaskType | None = None
     assignee_id: Identifier | None = None
     section_id: Identifier | None = None
     depends_on: list[Identifier] | None = Field(default=None, max_length=128)
@@ -141,6 +143,7 @@ def task_summary(task: dict) -> dict:
         "assignee_id", "depends_on", "claim_owner_id", "claim_expires_at", "updated_at",
     )
     result = {field: task.get(field) for field in fields}
+    result["task_type"] = task.get("task_type", "other")
     dependencies = task.get("depends_on", [])
     result.update(depends_on=dependencies[:10], depends_on_count=len(dependencies),
                   depends_on_truncated=len(dependencies) > 10)
@@ -294,15 +297,16 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
         }))
 
     @server.tool(annotations=WRITE)
-    def create_task(project_id: Identifier, section_id: Identifier, title: Title, rationale: Reason,
-                    reason: Reason, idempotency_key: Key, description: Description = "",
+    def create_task(project_id: Identifier, title: Title, rationale: Reason,
+                    reason: Reason, idempotency_key: Key, section_id: Identifier | None = None, description: Description = "",
                     acceptance_criteria: Description = "", priority: Priority = "medium",
+                    task_type: TaskType = "other",
                     assignee_id: Identifier | None = None,
                     depends_on: Annotated[list[Identifier], Field(max_length=128)] | None = None) -> dict[str, Any]:
-        """Create a task with purpose and acceptance criteria. Dependencies must belong to this project."""
+        """Create a project-board task with work type, purpose and criteria. No section is required; section_id supports legacy clients."""
         return clipped(api("POST", "/api/tasks", {
             "project_id": project_id, "section_id": section_id, "title": title, "rationale": rationale,
-            "description": description, "acceptance_criteria": acceptance_criteria, "priority": priority,
+            "description": description, "acceptance_criteria": acceptance_criteria, "priority": priority, "task_type": task_type,
             "assignee_id": assignee_id, "depends_on": depends_on or [],
             "reason": reason, "idempotency_key": idempotency_key,
         }))

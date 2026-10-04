@@ -44,13 +44,20 @@ async def protocol_session(parameters, errlog) -> None:
             assert status["api"]["status"] == "ok"
             project = await call("create_project", {"name": "Frozen smoke", "reason": "Verify bundled MCP",
                                                        "idempotency_key": "frozen-project"})
-            section = await call("create_section", {"project_id": project["id"], "title": "Installer verification",
-                                                      "reason": "Verify hierarchy", "idempotency_key": "frozen-section"})
-            task = await call("create_task", {"project_id": project["id"], "section_id": section["id"],
+            task = await call("create_task", {"project_id": project["id"], "task_type": "testing",
                                                "title": "Frozen protocol works", "rationale": "Check distributed executable",
                                                "acceptance_criteria": "Shared API and stdio tools operate",
                                                "reason": "Verify task schema", "idempotency_key": "frozen-task"})
-            assert (await call("get_task", {"task_id": task["id"]}))["task"]["title"] == "Frozen protocol works"
+            detail = (await call("get_task", {"task_id": task["id"]}))["task"]
+            assert detail["title"] == "Frozen protocol works" and detail["task_type"] == "testing"
+            board = await call("get_board", {"project_id": project["id"]})
+            assert next(item for item in board["tasks"] if item["id"] == task["id"])["task_type"] == "testing"
+            section = await call("create_section", {"project_id": project["id"], "title": "Legacy compatibility",
+                                                      "reason": "Verify existing clients", "idempotency_key": "frozen-section"})
+            legacy = await call("create_task", {"project_id": project["id"], "section_id": section["id"],
+                                                 "title": "Legacy section task", "rationale": "Keep existing clients compatible",
+                                                 "reason": "Verify legacy defaults", "idempotency_key": "frozen-legacy-task"})
+            assert legacy["section_id"] == section["id"] and legacy["task_type"] == "other"
 
 
 def main() -> None:
@@ -83,7 +90,7 @@ def main() -> None:
                         raise AssertionError("Frozen GUI server did not become healthy")
                     time.sleep(0.25)
             with opener.open(url, timeout=5) as response:
-                assert b"<html" in response.read(1024)
+                assert response.read() == (BUNDLE / "_internal" / "dist" / "index.html").read_bytes()
             with opener.open(url + "/api/connectors", timeout=5) as response:
                 metadata = json.load(response)
             assert Path(metadata["credentials_file"]).samefile(data / "connector-secrets.json")
@@ -107,7 +114,7 @@ def main() -> None:
             if process.poll() is None:
                 process.terminate()
             process.wait(timeout=15)
-    print("Frozen smoke passed: version, isolated data, bundled UI/API, project configs, real stdio MCP hierarchy.")
+    print("Frozen smoke passed: version, isolated data, bundled UI/API, project configs, real MCP typed tasks without sections and legacy compatibility.")
 
 
 if __name__ == "__main__":

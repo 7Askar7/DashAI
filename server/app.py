@@ -27,6 +27,7 @@ Key = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Status = Literal["backlog", "in_progress", "review", "done", "blocked"]
 Priority = Literal["urgent", "high", "medium", "low"]
+TaskType = Literal["research", "development", "testing", "bugfix", "documentation", "other"]
 NoteKind = Literal["progress", "decision", "evidence", "comment"]
 
 
@@ -73,12 +74,13 @@ class SectionChanges(StrictModel):
 
 class TaskCreate(Write):
     project_id: Identifier
-    section_id: Identifier
+    section_id: Identifier | None = None
     title: Text
     description: Description = ""
     rationale: Reason
     acceptance_criteria: Description = ""
     priority: Priority = "medium"
+    task_type: TaskType = "other"
     assignee_id: Identifier | None = None
     depends_on: list[Identifier] = Field(default_factory=list, max_length=128)
 
@@ -90,6 +92,7 @@ class TaskChanges(StrictModel):
     acceptance_criteria: Description | None = None
     status: Status | None = None
     priority: Priority | None = None
+    task_type: TaskType | None = None
     assignee_id: Identifier | None = None
     section_id: Identifier | None = None
     depends_on: list[Identifier] | None = Field(default=None, max_length=128)
@@ -208,15 +211,22 @@ class Store:
                 raise
 
     @staticmethod
+    def payload(table, value):
+        result = json.loads(value)
+        if table == "tasks":
+            result.setdefault("task_type", "other")
+        return result
+
+    @staticmethod
     def entity(db, table, entity_id):
         row = db.execute(f"SELECT payload FROM {table} WHERE id=?", (entity_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Объект не найден")
-        return json.loads(row["payload"])
+        return Store.payload(table, row["payload"])
 
     @staticmethod
     def entities(db, table, where="", args=()):
-        return [json.loads(row["payload"]) for row in db.execute(f"SELECT payload FROM {table} {where} ORDER BY rowid", args)]
+        return [Store.payload(table, row["payload"]) for row in db.execute(f"SELECT payload FROM {table} {where} ORDER BY rowid", args)]
 
     @staticmethod
     def agents(db):
@@ -248,9 +258,18 @@ class Store:
             if model.idempotency_key:
                 old = db.execute("SELECT request,response FROM idempotency WHERE actor_id=? AND scope=? AND key=?", (actor["id"], scope, model.idempotency_key)).fetchone()
                 if old:
-                    if old["request"] != encode(payload):
+                    previous = json.loads(old["request"])
+                    if scope == "/api/tasks":
+                        previous.setdefault("task_type", "other")
+                        previous.setdefault("section_id", None)
+                    elif isinstance(model, TaskPatch):
+                        previous["changes"].setdefault("task_type", None)
+                    if encode(previous) != encode(payload):
                         raise HTTPException(409, "Этот idempotency_key уже использован с другим содержимым")
-                    return json.loads(old["response"])
+                    result = json.loads(old["response"])
+                    if "section_id" in result and "status" in result:
+                        result.setdefault("task_type", "other")
+                    return result
             result = operation(db)
             if model.idempotency_key:
                 db.execute("INSERT INTO idempotency VALUES (?,?,?,?,?)", (actor["id"], scope, model.idempotency_key, encode(payload), encode(result)))
@@ -434,8 +453,16 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
         session_id = session(request)
         def operation(db):
             store.entity(db, "projects", body.project_id)
+            section_id = body.section_id
+            if section_id is None:
+                section_id = "project-board:" + body.project_id
+                if not db.execute("SELECT 1 FROM sections WHERE id=?", (section_id,)).fetchone():
+                    position = db.execute("SELECT count(*) FROM sections WHERE project_id=?", (body.project_id,)).fetchone()[0]
+                    section = {"id": section_id, "project_id": body.project_id, "title": "Общая доска", "description": "Служебная группа задач общей доски проекта", "position": position, "version": 1, "is_default": True, "created_at": now(), "updated_at": now()}
+                    db.execute("INSERT INTO sections VALUES (?,?,?)", (section_id, body.project_id, encode(section)))
+                    store.record(db, who, body.reason, "section", section_id, "section.created", None, section, project_id=body.project_id, session_id=session_id)
             number = db.execute("SELECT count(*) FROM tasks").fetchone()[0] + 1
-            task = {"id": str(uuid4()), "short_id": f"AD-{number:03d}", **body.model_dump(exclude={"reason", "idempotency_key"}), "status": "backlog", "version": 1, "claim_owner_id": None, "claim_expires_at": None, "created_at": now(), "updated_at": now()}
+            task = {"id": str(uuid4()), "short_id": f"AD-{number:03d}", **body.model_dump(exclude={"reason", "idempotency_key"}), "section_id": section_id, "status": "backlog", "version": 1, "claim_owner_id": None, "claim_expires_at": None, "created_at": now(), "updated_at": now()}
             validate_task(db, task)
             db.execute("INSERT INTO tasks VALUES (?,?,?,?)", (task["id"], task["project_id"], task["section_id"], encode(task)))
             store.record(db, who, body.reason, "task", task["id"], "task.created", None, task, project_id=task["project_id"], task_id=task["id"], session_id=session_id)
