@@ -1,19 +1,29 @@
 # DashAI
 
-Личная Kanban-доска проектов и история работы Codex и Claude Code во вкладке VS Code. Карточки имеют тип работы, причину изменений, критерии и записи проверок; агенты работают через общий MCP/API.
+![DashAI cover](https://raw.githubusercontent.com/7Askar7/DashAI/main/public/brand/dashai-cover.png)
 
-Для Windows 10/11 x64 и VS Code 1.95+. Python, Node.js и отдельное настольное приложение устанавливать не нужно.
+A local Kanban dashboard for collaborating with Codex and Claude Code. Organize projects, subprojects, and tasks, and track changes, decisions, and agent activity directly in VS Code.
 
-## Открыть
+**Windows 10/11 x64 · VS Code 1.95+ · Russian interface.** Python, Node.js, and a separate desktop installation are not required. Your projects and history stay on your computer.
 
-Скачайте VSIX из [GitHub Releases](https://github.com/7Askar7/DashAI/releases/latest), выберите Extensions → «…» → **Install from VSIX…**. Затем значок **DashAI** слева → **Открыть доску**, либо `Ctrl+Shift+P` → **DashAI: Открыть доску**.
+## Open your board
 
-Чтобы подключить существующие клиенты Codex/Claude Code, откройте доверенную локальную папку и выполните **DashAI: Подключить Codex и Claude Code**. Команда создает конфигурацию MCP проекта; после этого начните новую сессию клиента и разрешите MCP, если он запросит доступ.
+After installing, select **DashAI** in the Activity Bar → **Открыть доску**, or use the Command Palette → **DashAI: Открыть доску**. You can also install a VSIX from [GitHub Releases](https://github.com/7Askar7/DashAI/releases/latest) using Extensions → “…” → **Install from VSIX…**.
 
-Данные остаются в `%LOCALAPPDATA%\Agentboard`; настольное приложение использует ту же личную папку. Расширение не запускает модели. Агенты явно сохраняют изменения через `log_change`; наличие настроек не считается доказательством подключения.
+Create a project and optional nested subprojects, such as Website → Payments → Testing. Every task stays on one shared project board, grouped by status. Select the subproject and work type separately when creating or editing a task. Filters include the selected subproject's descendants.
 
-## Обновления
+## Connect Codex and Claude Code
 
-Расширение проверяет подписанный канал GitHub Releases и устанавливает проверенный VSIX штатной командой VS Code. **DashAI: Automatic Updates** включено по умолчанию; доступна команда **DashAI: Проверить обновления**. Редактор может предложить перезапустить расширения.
+Open a trusted local project folder and run **DashAI: Подключить Codex и Claude Code**. This prepares project-scoped MCP configuration while preserving your other settings. Start a new agent session and approve the MCP connection if your client asks. Agent clients are installed separately.
 
-Выпуск распространяется через GitHub; публикация в Visual Studio Marketplace пока не настроена. [Полная инструкция](https://github.com/7Askar7/DashAI/blob/main/docs/vscode.md).
+Agents share the same local API and store as the dashboard. They can create and claim tasks, explain decisions, log file changes, and attach verification evidence. The history records the author, session, reason, and before/after values. A configuration file alone does not prove that an agent has connected.
+
+## Local data and updates
+
+Personal data is stored in `%LOCALAPPDATA%\Agentboard`, separately from the extension. Updates and uninstalling the extension do not remove your project database. The optional desktop app uses the same personal folder. DashAI does not run AI models or require OpenAI or Anthropic API keys.
+
+VS Code handles updates installed from Marketplace. DashAI also checks its signed GitHub Releases channel; downloaded packages are verified with Ed25519, size, and SHA-256 before installation. **DashAI: Automatic Updates** is enabled by default; manual checks use **DashAI: Проверить обновления**. VS Code may ask you to restart extensions. Existing agent sessions keep their version; new sessions use the updated companion without rewriting project configuration.
+
+Local Windows folders are supported. Browser VS Code, virtual folders, and automatic agent setup inside SSH, WSL, or Dev Containers are not supported.
+
+[Setup and connector guide](https://github.com/7Askar7/DashAI/blob/main/docs/vscode.md) · [Source code](https://github.com/7Askar7/DashAI) · [Support and issues](https://github.com/7Askar7/DashAI/issues)

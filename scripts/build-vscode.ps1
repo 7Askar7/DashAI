@@ -43,6 +43,7 @@ foreach ($name in @('package.json', '.vscodeignore', 'extension.cjs', 'updates.c
 }
 if (Test-Path -LiteralPath (Join-Path $extensionRoot 'LICENSE')) { Copy-Item -LiteralPath (Join-Path $extensionRoot 'LICENSE') -Destination $staging }
 Copy-Item -LiteralPath (Join-Path $extensionRoot 'assets') -Destination $staging -Recurse
+Copy-Item -LiteralPath (Join-Path $projectRoot 'public\brand\dashai-logo-128.png') -Destination (Join-Path $staging 'assets')
 Copy-Item -LiteralPath $bundle -Destination (Join-Path $staging 'runtime') -Recurse
 $releaseDir = Join-Path $projectRoot 'artifacts\releases'
 New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
@@ -55,7 +56,7 @@ import json, sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive:
     names = set(archive.namelist())
     required = {'extension/package.json', 'extension/extension.cjs', 'extension/updates.cjs',
-                'extension/update-channel.json', 'extension/assets/agentboard.svg',
+                'extension/update-channel.json', 'extension/assets/agentboard.svg', 'extension/assets/dashai-logo-128.png',
                 'extension/runtime/Agentboard/Agentboard.exe', 'extension/runtime/Agentboard/AgentboardMCP.exe',
                 'extension/runtime/Agentboard/_internal/package.json',
                 'extension/runtime/Agentboard/_internal/dist/index.html',
@@ -65,7 +66,8 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     assert not any(name.rsplit('/', 1)[-1] in forbidden for name in names), 'Personal data in VSIX'
     assert not any(name.startswith(('extension/node_modules/', 'extension/tests/')) for name in names), 'Development files in VSIX'
     package = json.loads(archive.read('extension/package.json'))
-    assert package['version'] == sys.argv[2] and package['publisher'] == '7askar7' and package['name'] == 'agentboard'
+    assert package['version'] == sys.argv[2] and package['publisher'] == '7Askar7' and package['name'] == 'agentboard'
+    assert package['icon'] == 'assets/dashai-logo-128.png'
     assert 'win32-x64' in archive.read('extension.vsixmanifest').decode('utf-8'), 'Missing Windows x64 target'
 print('VSIX resources and data isolation: PASS')
 '@

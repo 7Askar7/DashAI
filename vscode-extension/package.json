@@ -1,9 +1,14 @@
 {
   "name": "agentboard",
   "displayName": "DashAI",
-  "description": "Личная Kanban-доска, задачи и история работы Codex и Claude Code внутри VS Code.",
-  "version": "1.4.0",
-  "publisher": "7askar7",
+  "description": "A local Kanban dashboard for Codex and Claude Code: projects, subprojects, tasks, and change history inside VS Code.",
+  "version": "1.4.1",
+  "publisher": "7Askar7",
+  "icon": "assets/dashai-logo-128.png",
+  "galleryBanner": {
+    "color": "#0d171e",
+    "theme": "dark"
+  },
   "license": "UNLICENSED",
   "engines": {
     "vscode": "^1.95.0"
