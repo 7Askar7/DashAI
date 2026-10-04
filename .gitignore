@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.venv/
+.venv-build/
+__pycache__/
+.pytest_cache/
+*.pyc
+data/
+vendor/
+.mcp.json
+.codex/config.toml
+artifacts/qa/
+artifacts/desktop/
+artifacts/releases/
+build/
+*.log
