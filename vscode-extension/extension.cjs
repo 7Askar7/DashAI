@@ -6,7 +6,6 @@ const crypto = require('node:crypto');
 const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const runFile = promisify(execFile);
-const updates = require('./updates.cjs');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let heartbeat;
 
@@ -122,7 +121,7 @@ function activate(context) {
   const vscode = require('vscode');
   const version = context.extension.packageJSON.version;
   const dataDir = path.join(process.env.LOCALAPPDATA || path.join(require('node:os').homedir(), 'AppData', 'Local'), 'Agentboard');
-  let panel, panelInstance, runtime, starting, checking = false, installedUpdate = false;
+  let panel, panelInstance, runtime, starting;
   const output = vscode.window.createOutputChannel('DashAI');
   context.subscriptions.push(output);
   const fail = error => {
@@ -227,31 +226,9 @@ function activate(context) {
     vscode.window.showInformationMessage('Конфигурации Codex и Claude Code сохранены. Начните новую сессию клиента и разрешите project MCP, если он запросит доступ.');
   }
 
-  async function checkUpdates(manual = false) {
-    if (checking || installedUpdate) return;
-    checking = true;
-    try {
-      const config = JSON.parse(await fs.readFile(path.join(context.extensionPath, 'update-channel.json'), 'utf8'));
-      const manifest = await updates.checkUpdate(config, version);
-      if (!manifest) {
-        if (manual) vscode.window.showInformationMessage('Установлена актуальная версия DashAI.');
-        return;
-      }
-      const file = await updates.downloadUpdate(manifest, path.join(dataDir, 'vscode-updates'));
-      await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(file));
-      installedUpdate = true;
-      const selected = await vscode.window.showInformationMessage(`DashAI ${manifest.version} установлен. Перезагрузите окно VS Code, чтобы открыть новую версию.`, 'Перезагрузить окно');
-      if (selected) await vscode.commands.executeCommand('workbench.action.reloadWindow');
-    } catch (error) {
-      output.appendLine('Проверка обновлений: ' + error.message);
-      if (manual) fail(error);
-    } finally { checking = false; }
-  }
-
   const command = (name, action) => context.subscriptions.push(vscode.commands.registerCommand(name, () => action().catch(fail)));
   command('agentboard.open', open);
   command('agentboard.connectAgents', connectAgents);
-  command('agentboard.checkUpdates', () => checkUpdates(true));
   command('agentboard.stop', async () => {
     const active = await discover(dataDir);
     if (!active) return;
@@ -269,11 +246,11 @@ function activate(context) {
   status.command = 'agentboard.open';
   status.show();
   context.subscriptions.push(status);
-  const updateTimer = setInterval(() => {
-    if (vscode.workspace.getConfiguration('agentboard').get('automaticUpdates', true)) checkUpdates();
-  }, 60 * 60 * 1000);
-  context.subscriptions.push({ dispose: () => { clearInterval(updateTimer); clearInterval(heartbeat); heartbeat = undefined; panel?.dispose(); } });
-  if (vscode.workspace.getConfiguration('agentboard').get('automaticUpdates', true)) checkUpdates();
+  context.subscriptions.push({ dispose: () => { clearInterval(heartbeat); heartbeat = undefined; panel?.dispose(); } });
+  // Marketplace builds omit the GitHub updater; VS Code delivers their updates.
+  if (require('node:fs').existsSync(path.join(__dirname, 'updates.cjs'))) {
+    require('./updates.cjs').activateUpdates({ vscode, context, version, dataDir, output, fail });
+  }
   return { dataDir, discover: () => discover(dataDir) };
 }
 

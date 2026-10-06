@@ -11,7 +11,8 @@ exports.run = async function () {
   const directory = process.env.DASHAI_VSCODE_QA;
   assert(directory, 'Run through scripts/vscode_smoke.py with an isolated profile.');
   const write = (name, value) => fs.writeFile(path.join(directory, name), JSON.stringify(value));
-  const extension = vscode.extensions.getExtension('7askar7.agentboard');
+  // GitHub VSIX keeps the original ID; the Marketplace build is published as dashai.
+  const extension = vscode.extensions.getExtension('7askar7.agentboard') || vscode.extensions.getExtension('7askar7.dashai');
   assert(extension, 'VSIX is installed in the isolated extension directory');
   // VS Code returns a separate API object per extension; stub the installed product's API.
   const productAPI = createRequire(path.join(extension.extensionPath, 'extension.cjs'))('vscode');

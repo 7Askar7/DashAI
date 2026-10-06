@@ -4,9 +4,8 @@
 
 ## Установить и открыть
 
-1. Скачать `Agentboard-VSCode-<версия>-win32-x64.vsix` из [DashAI Releases](https://github.com/7Askar7/DashAI/releases/latest).
-2. В VS Code открыть Extensions (`Ctrl+Shift+X`), меню «…» → **Install from VSIX…** и выбрать скачанный файл.
-3. Нажать значок **DashAI** на левой панели → **Открыть доску**. Та же команда доступна через `Ctrl+Shift+P` → **DashAI: Открыть доску** и меню папки в Explorer.
+1. Установить [DashAI из Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=7Askar7.dashai): Extensions (`Ctrl+Shift+X`) → поиск **DashAI**. Другой вариант — `Agentboard-VSCode-<версия>-win32-x64.vsix` из [DashAI Releases](https://github.com/7Askar7/DashAI/releases/latest) через меню «…» → **Install from VSIX…**. Обе копии одновременно не устанавливать.
+2. Нажать значок **DashAI** на левой панели → **Открыть доску**. Та же команда доступна через `Ctrl+Shift+P` → **DashAI: Открыть доску** и меню папки в Explorer.
 
 Создайте проект, вложенные подпроекты и карточки на общей Kanban-доске. Подпроект и тип задачи выбираются отдельно из списков; карточки и журнал показывают, что менялось, кем, в какой сессии и по какой причине. Dashboard открыт во вкладке VS Code и использует тот же API, что и Codex/Claude Code.
 
@@ -32,16 +31,18 @@ MCP companion сохраняется в постоянной личной пап
 
 Настройка **DashAI: Automatic Updates** включена по умолчанию и относится к приложению, а не к содержимому проекта. Ее можно отключить в настройках VS Code; команда **DashAI: Проверить обновления** доступна для ручной проверки. При недоступной сети или неверной подписи продолжает работать установленная версия. Также можно установить новый VSIX вручную через **Install from VSIX…**.
 
-GitHub Releases продолжает распространять VSIX с подписанным каналом. Издатель **DashAI**, ID **7Askar7**, зарегистрирован пользователем в Visual Studio Marketplace. Само создание издателя не публикует расширение; до успешной загрузки и проверки Marketplace доступность в поиске не заявляется. Регистр publisher ID не меняет идентичность существующего `7askar7.agentboard`; данные и command IDs сохранены.
+GitHub Releases продолжает распространять VSIX с подписанным каналом. Издатель **DashAI**, ID **7Askar7**, зарегистрирован пользователем в Visual Studio Marketplace. Расширение опубликовано в Marketplace как `7Askar7.dashai` (см. ниже). Регистр publisher ID не меняет идентичность существующего `7askar7.agentboard`; данные и command IDs сохранены.
 
 ## Первая публикация в Marketplace
 
 1. В [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage) выбрать **DashAI (7Askar7)**.
 2. Нажать **New extension → Visual Studio Code**.
-3. Выбрать готовый файл `Agentboard-VSCode-1.4.2-win32-x64.vsix` из `artifacts/releases` и выполнить загрузку.
+3. Выбрать файл `DashAI-Marketplace-<версия>-win32-x64.vsix` из `artifacts/releases` (сборка `./scripts/build-vscode.ps1 -Marketplace`) и выполнить загрузку.
 4. Дождаться завершения проверки Marketplace; затем открыть страницу расширения и проверить установку через VS Code.
 
-Пакет имеет PNG-логотип 128×128, английское описание, выбранную обложку и target Windows x64. Для этой ручной загрузки токен публикации в проект не добавляется. Будущую автоматическую публикацию можно настроить отдельно после первого успешного upload. Пакеты, опубликованные в Marketplace, обновляются также штатным механизмом VS Code; подписанный GitHub канал продолжает работать.
+Пакет имеет PNG-логотип 128×128, английское описание, выбранную обложку и target Windows x64. Для этой ручной загрузки токен публикации в проект не добавляется. Будущую автоматическую публикацию можно настроить отдельно после первого успешного upload.
+
+Marketplace-вариант имеет ID `7Askar7.dashai` и обновляется только штатным механизмом VS Code: в нем нет GitHub-канала, команды и настройки обновлений, а в runtime — файлов настольного обновления. GitHub VSIX сохраняет ID `7Askar7.agentboard` и подписанный канал. Оба варианта регистрируют одинаковые команды, поэтому перед установкой из Marketplace GitHub-копию нужно удалить; личные данные при этом сохраняются.
 
 Ручная загрузка VSIX описана в [официальной инструкции Microsoft](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#publish-an-extension). Локальная готовность пакета и проверка в редакторе отделены от факта публикации.
 
@@ -53,9 +54,11 @@ GitHub Releases продолжает распространять VSIX с под
 
 Открыть **Manage Publishers & Extensions → Contact Microsoft** и запросить проверку. Этот путь указан в [официальном FAQ публикации](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#i-need-help-with-my-vs-marketplace-account-or-support-in-publishing-an-extension). Команда Marketplace также направляет случаи с той же ошибкой на **VSMarketplace@microsoft.com**: [ответ команды](https://github.com/microsoft/vsmarketplace/issues/2010#issuecomment-4959860814).
 
-Готовый английский текст: [marketplace-support.txt](marketplace-support.txt). Перед отправкой приложить скриншот ошибки; точный VSIX предоставить по запросу или через разрешенный поддержкой способ передачи. В тексте зафиксированы версия, source commit, размер и SHA-256 отклоненного файла. Письмо подготовлено, но не отправлено. В **Details** издателя также проверить, есть ли отдельное требование подтвердить контактный email; выполнение этого требования само по себе не гарантирует устранение данного отказа.
+Готовый английский текст: [marketplace-support.txt](marketplace-support.txt). Перед отправкой приложить скриншот ошибки; точный VSIX предоставить по запросу или через разрешенный поддержкой способ передачи. В тексте зафиксированы версия, source commit, размер и SHA-256 отклоненного файла. Письмо отправлено 05.10.2026. В **Details** издателя также проверить, есть ли отдельное требование подтвердить контактный email; выполнение этого требования само по себе не гарантирует устранение данного отказа.
 
-Пакет и его identity сохранены до получения диагностик; повторные изменения бренда, версии, runtime или защиты обновлений без подтвержденной причины не являются исправлением. Расширение остается доступным для локальной установки через **Install from VSIX…**. Публикация в Marketplace пока не выполнена.
+05.10.2026 поддержка запросила manifest, а 06.10.2026 после ручной проверки отказала: «the extension's content do not align with the VS Marketplace policy and naming guidelines», без указания поля или файла. Вероятные причины — вывод, не подтвержденный Microsoft: ID `agentboard` совпадает с существующим расширением «Agentboard» и похож на «Agent Board» ([правила против имперсонации](https://github.com/microsoft/vsmarketplace/discussions/2042)); VSIX сам устанавливал обновления из GitHub в обход проверки Marketplace; в runtime попадали служебные файлы проекта. Начиная с 1.4.3 сборки не содержат docs, README, AGENTS/CLAUDE и skills, а для Marketplace собирается отдельный вариант без кода самообновления. Расширение остается доступным и для локальной установки через **Install from VSIX…**.
+
+06.10.2026 пакет `7Askar7.dashai` 1.4.3 отклонен тем же автоматическим сообщением. Тег `kanban` был во всех трех отклоненных пакетах. По публичному Gallery API с 01.10.2026 12:00 UTC не опубликовано ни одного нового расширения с этим тегом, а остальные теги DashAI проходят ежедневно; автор tasks-for-markdown прошел проверку тем же VSIX, убрав этот тег. Поэтому `kanban` удален из `keywords`; слово в описании сохранено. Пакет без этого тега, в остальном побайтово совпадающий с отклоненным, принят: [7Askar7.dashai](https://marketplace.visualstudio.com/items?itemName=7Askar7.dashai) 1.4.3 имеет статус `validated, public` с 06.10.2026 12:40 UTC, а VSIX из Marketplace совпадает с локальной сборкой (SHA-256 `0aa51c0d140334776fe2fbff4a3e66ee132177c4a78287a4960d291c7e57125c`). Microsoft публично не описывает это правило фильтра; не возвращайте `kanban` в теги.
 
 ## Собрать и выпустить
 
@@ -64,10 +67,11 @@ GitHub Releases продолжает распространять VSIX с под
 ```powershell
 ./scripts/build-desktop.ps1 -ManifestUrl 'https://github.com/7Askar7/DashAI/releases/latest/download/latest.json'
 ./scripts/build-vscode.ps1
+./scripts/build-vscode.ps1 -Marketplace
 npm --prefix vscode-extension test
 ```
 
-Сборка использует зафиксированные devDependencies `@vscode/vsce` и `@vscode/test-electron`. Инструментам сборки нужен Node.js 22; при локальном Node.js 20 скрипт запускает Node 22 через `npx`, не меняя глобальную версию. Runtime расширения использует Node из VS Code и стандартные модули. Результат: `artifacts/releases/Agentboard-VSCode-<версия>-win32-x64.vsix`.
+Сборка использует зафиксированные devDependencies `@vscode/vsce` и `@vscode/test-electron`. Инструментам сборки нужен Node.js 22; при локальном Node.js 20 скрипт запускает Node 22 через `npx`, не меняя глобальную версию. Runtime расширения использует Node из VS Code и стандартные модули. Результат: `artifacts/releases/Agentboard-VSCode-<версия>-win32-x64.vsix`, с `-Marketplace` — `DashAI-Marketplace-<версия>-win32-x64.vsix`.
 
 Версии корневых `package.json`/`package-lock.json` и manifest расширения должны совпадать. Workflow **Windows release** собирает свежий frozen bundle и VSIX, запускает проверки и подписывает два независимых feed одним существующим ключом издателя. Release включает EXE, `latest.json`, VSIX и `vscode-latest.json`. Приватный ключ передается только шагу подписи через `AGENTBOARD_UPDATE_PRIVATE_KEY` и не входит в пакеты.
 

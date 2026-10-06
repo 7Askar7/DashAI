@@ -6,7 +6,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
-const { verifyManifest, checkUpdate, downloadUpdate } = require('../updates.cjs');
+const { verifyManifest, checkUpdate, downloadUpdate, activateUpdates } = require('../updates.cjs');
 
 // Node 20 exposes fetch through a lazy getter; node:test mock.method needs a value descriptor.
 Object.defineProperty(globalThis, 'fetch', { value: globalThis.fetch, writable: true, configurable: true });
@@ -128,4 +128,25 @@ test('packaged VS Code release key matches the existing trusted desktop publishe
   const extensionChannel = JSON.parse(await fs.readFile(path.join(__dirname, '../update-channel.json'), 'utf8'));
   assert.equal(extensionChannel.public_key, trustedKey);
   assert.equal(extensionChannel.manifest_url, config.manifest_url);
+});
+
+test('GitHub build wires the manual update command; failures are logged and reported, never thrown', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'agentboard-wiring-'));
+  await fs.writeFile(path.join(directory, 'update-channel.json'), JSON.stringify({ ...config, manifest_url: 'https://example.com/feed.json' }));
+  const commands = {}, logged = [], failed = [], subscriptions = [];
+  const vscode = {
+    commands: { registerCommand: (name, action) => { commands[name] = action; return { dispose() {} }; } },
+    workspace: { getConfiguration: () => ({ get: () => false }) },
+  };
+  try {
+    activateUpdates({ vscode, context: { extensionPath: directory, subscriptions }, version: '1.4.0', dataDir: directory,
+      output: { appendLine: line => logged.push(line) }, fail: error => failed.push(error.message) });
+    assert.deepEqual(Object.keys(commands), ['agentboard.checkUpdates']);
+    await commands['agentboard.checkUpdates']();
+    assert.deepEqual(failed, ['Invalid VS Code update channel']);
+    assert.match(logged[0], /Invalid VS Code update channel/);
+  } finally {
+    subscriptions.forEach(item => item.dispose());
+    await fs.rm(directory, { recursive: true, force: true });
+  }
 });

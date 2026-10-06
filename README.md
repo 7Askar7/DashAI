@@ -6,7 +6,7 @@
 
 ## Открыть
 
-**В VS Code:** скачайте файл `Agentboard-VSCode-<версия>-win32-x64.vsix` из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest). В VS Code выберите Extensions → «…» → **Install from VSIX…**, затем нажмите значок DashAI слева → **Открыть доску**. Dashboard откроется во вкладке редактора; Python, Node.js и отдельное приложение устанавливать не требуется. Данные остаются на вашем компьютере. [Установка, подключение агентов и обновления расширения](docs/vscode.md).
+**В VS Code:** установите [DashAI из Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=7Askar7.dashai) (Extensions → поиск «DashAI») или файл `Agentboard-VSCode-<версия>-win32-x64.vsix` из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest) через Extensions → «…» → **Install from VSIX…** — не обе копии сразу. Затем нажмите значок DashAI слева → **Открыть доску**. Dashboard откроется во вкладке редактора; Python, Node.js и отдельное приложение устанавливать не требуется. Данные остаются на вашем компьютере. [Установка, подключение агентов и обновления расширения](docs/vscode.md).
 
 Для обычного пользователя Windows 10/11 x64: **[скачать установщик последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest)**. Установка для текущего пользователя, без прав администратора, Python и Node.js. Ярлык запускает локальный dashboard; кнопка лаунчера подключает агентов к выбранной папке проекта. Каждая установка хранит свою базу в `%LOCALAPPDATA%\Agentboard`.
 

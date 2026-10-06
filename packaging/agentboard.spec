@@ -10,12 +10,6 @@ datas = [
     (str(generated / "THIRD_PARTY_NOTICES.txt"), "."),
     (str(root / "package.json"), "."),
     (str(root / "desktop" / "install-update.ps1"), "desktop"),
-    (str(root / ".agents" / "skills"), ".agents/skills"),
-    (str(root / ".claude" / "skills"), ".claude/skills"),
-    (str(root / "docs"), "docs"),
-    (str(root / "README.md"), "."),
-    (str(root / "AGENTS.md"), "."),
-    (str(root / "CLAUDE.md"), "."),
 ]
 datas += copy_metadata("mcp")
 # AnyIO's optional TestRunner imports pytest; the application runs no test fixtures.

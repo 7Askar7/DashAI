@@ -156,4 +156,34 @@ async function downloadUpdate(manifest, directory) {
   }
 }
 
-module.exports = { verifyManifest, checkUpdate, downloadUpdate };
+// GitHub VSIX only: the Marketplace build omits this file, and VS Code updates that build itself.
+function activateUpdates({ vscode, context, version, dataDir, output, fail }) {
+  let checking = false, installed = false;
+  async function run(manual) {
+    if (checking || installed) return;
+    checking = true;
+    try {
+      const config = JSON.parse(await fs.readFile(path.join(context.extensionPath, 'update-channel.json'), 'utf8'));
+      const manifest = await checkUpdate(config, version);
+      if (!manifest) {
+        if (manual) vscode.window.showInformationMessage('Установлена актуальная версия DashAI.');
+        return;
+      }
+      const file = await downloadUpdate(manifest, path.join(dataDir, 'vscode-updates'));
+      await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(file));
+      installed = true;
+      const selected = await vscode.window.showInformationMessage(`DashAI ${manifest.version} установлен. Перезагрузите окно VS Code, чтобы открыть новую версию.`, 'Перезагрузить окно');
+      if (selected) await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    } catch (error) {
+      output.appendLine('Проверка обновлений: ' + error.message);
+      if (manual) fail(error);
+    } finally { checking = false; }
+  }
+  const automatic = () => vscode.workspace.getConfiguration('agentboard').get('automaticUpdates', true);
+  const timer = setInterval(() => { if (automatic()) run(false); }, 60 * 60 * 1000);
+  context.subscriptions.push({ dispose: () => clearInterval(timer) },
+    vscode.commands.registerCommand('agentboard.checkUpdates', () => run(true)));
+  if (automatic()) run(false);
+}
+
+module.exports = { verifyManifest, checkUpdate, downloadUpdate, activateUpdates };
