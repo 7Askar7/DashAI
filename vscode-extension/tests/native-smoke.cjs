@@ -30,6 +30,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   for (const key of Object.keys(environment)) {
     if (key.startsWith('VSCODE_') || key === 'ELECTRON_RUN_AS_NODE' || key === 'AGENTBOARD_TOKEN') environment[key] = undefined;
   }
+  await fs.mkdir(path.join(root, 'build/vscode-test'), { recursive: true });
   const vscodeExecutablePath = await downloadAndUnzipVSCode({ version: '1.142.0', cachePath: path.join(root, 'build/vscode-test') });
   const [cli, ...cliArgs] = resolveCliArgsFromVSCodeExecutablePath(vscodeExecutablePath, { reuseMachineInstall: true });
   const installation = await runFile(cli, [...cliArgs, '--user-data-dir', profile, '--extensions-dir', extensions,
