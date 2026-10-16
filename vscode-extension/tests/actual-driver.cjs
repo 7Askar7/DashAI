@@ -15,7 +15,7 @@ exports.run = async function () {
   const progress = async stage => {
     if (!native) return;
     console.log('DashAI native QA:', stage);
-    await write('driver-progress.json', { stage });
+    await write('driver-progress.json', { stage, time: Date.now() });
   };
   await progress('driver started');
   // GitHub VSIX keeps the original ID; the Marketplace build is published as dashai.
@@ -30,6 +30,9 @@ exports.run = async function () {
     return vscode.Uri.file(path.join(directory, name.startsWith('dashai-documentation.') ? name : 'project-export.json'));
   };
   let lastCommand = 0;
+  const activationTimer = native ? setInterval(() => {
+    write('driver-activation.json', { isActive: extension.isActive, hasExports: extension.isActive && !!extension.exports }).catch(console.error);
+  }, 5000) : null;
   try {
     let api;
     if (native) {
@@ -113,6 +116,7 @@ exports.run = async function () {
     await write('driver-error.json', { error: error.stack || String(error) });
     throw error;
   } finally {
+    clearInterval(activationTimer);
     productAPI.window.showSaveDialog = originalSaveDialog;
     if (originalClipboard !== null) await vscode.env.clipboard.writeText(originalClipboard);
   }

@@ -53,7 +53,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const child = spawn(vscodeExecutablePath, [repository, '--user-data-dir', profile, '--extensions-dir', extensions,
     '--extensionDevelopmentPath=' + driver, '--extensionTestsPath=' + path.join(driver, 'index.cjs'),
     '--no-sandbox', '--disable-gpu-sandbox', '--no-cached-data', '--disable-workspace-trust',
-    '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-telemetry'],
+    '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-telemetry', '--log', 'trace'],
   { env: environment, stdio: ['ignore', log.fd, log.fd] });
   let launchError, exit, result, failure;
   child.once('error', error => { launchError = error; });
@@ -74,17 +74,34 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       await pause(200);
     }
     assert.equal(result?.status, 'passed', 'Native product assertions did not finish within 120 seconds.');
-  } catch (error) { failure = error; }
+  } catch (error) {
+    failure = error;
+    try {
+      const names = directory => fs.readdir(directory).catch(error => [error.code]);
+      const snapshot = {
+        files: await names(data),
+        runtimeCopies: await names(path.join(data, 'vscode-runtime')),
+        bundle: await names(path.join(data, 'vscode-runtime', version)),
+        runtime: await require('../extension.cjs').discover(data),
+        desktopLog: await fs.readFile(path.join(data, 'logs/desktop.log'), 'utf8').catch(error => error.code),
+      };
+      await fs.writeFile(path.join(directory, 'driver-runtime.json'), JSON.stringify(snapshot));
+    } catch (diagnosticError) { console.error('Could not snapshot the isolated QA runtime:', diagnosticError); }
+  }
   finally {
     let timeout;
+    const waitForExit = milliseconds => Promise.race([exited.then(() => true), new Promise(resolve => {
+      timeout = setTimeout(() => resolve(false), milliseconds);
+    })]).finally(() => clearTimeout(timeout));
     try {
       // Only this spawned QA editor is addressed; success comes from the driver's assertions.
       if (child.pid && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
-      await Promise.race([exited, new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('Isolated QA editor did not exit after SIGTERM.')), 15000);
-      })]);
+      if (!await waitForExit(10000)) {
+        child.kill('SIGKILL');
+        if (!await waitForExit(5000)) throw new Error('Isolated QA editor did not exit after SIGKILL.');
+      }
     } catch (error) { failure ||= error; }
-    finally { clearTimeout(timeout); }
+    finally { child.unref(); }
     await log.close().catch(error => { failure ||= error; });
   }
   if (failure) throw failure;
