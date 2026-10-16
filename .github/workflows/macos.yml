@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos:
     strategy:

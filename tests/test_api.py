@@ -30,6 +30,7 @@ def post(client, url, payload, headers=BROWSER, expected=200):
 def test_frontend_entry_revalidates_after_runtime_update(tmp_path, monkeypatch):
     import importlib
     module = importlib.import_module('server.app')
+    (tmp_path / 'package.json').write_bytes((module.ROOT / 'package.json').read_bytes())
     monkeypatch.setattr(module, 'ROOT', tmp_path)
     dist = tmp_path / 'dist'
     (dist / 'assets').mkdir(parents=True)
