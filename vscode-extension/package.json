@@ -2,7 +2,7 @@
   "name": "agentboard",
   "displayName": "DashAI",
   "description": "A local Kanban dashboard for Codex and Claude Code: projects, subprojects, tasks, and change history inside VS Code.",
-  "version": "1.4.3",
+  "version": "1.5.1",
   "publisher": "7Askar7",
   "icon": "assets/dashai-logo-128.png",
   "galleryBanner": {
@@ -13,12 +13,6 @@
   "engines": {
     "vscode": "^1.95.0"
   },
-  "os": [
-    "win32"
-  ],
-  "cpu": [
-    "x64"
-  ],
   "categories": [
     "Visualization",
     "Other"
@@ -52,7 +46,7 @@
     },
     "virtualWorkspaces": {
       "supported": false,
-      "description": "DashAI использует локальную папку Windows и локальных клиентов агентов."
+      "description": "DashAI requires a local project folder and local agent clients."
     }
   },
   "contributes": {
@@ -132,7 +126,7 @@
   },
   "scripts": {
     "test": "node --test tests/extension.test.cjs tests/updates.test.cjs",
-    "package": "vsce package --target win32-x64 --no-dependencies --skip-license"
+    "package": "python ../scripts/package_vscode.py --marketplace"
   },
   "devDependencies": {
     "@vscode/test-electron": "3.1.0",

@@ -18,7 +18,8 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 mcp==1.27.0
 packaging==26.3
-pefile==2024.8.26
+pefile==2024.8.26; sys_platform == 'win32'
+macholib==1.16.4; sys_platform == 'darwin'
 pluggy==1.6.0
 pycparser==3.0
 pydantic==2.13.5
@@ -30,8 +31,8 @@ PyJWT==2.15.1
 pytest==8.3.5
 python-dotenv==1.2.4
 python-multipart==0.0.32
-pywin32==312
-pywin32-ctypes==0.2.3
+pywin32==312; sys_platform == 'win32'
+pywin32-ctypes==0.2.3; sys_platform == 'win32'
 referencing==0.37.0
 rpds-py==2026.6.3
 setuptools==84.0.0

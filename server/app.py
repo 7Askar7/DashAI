@@ -18,6 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from .project_map import SCHEMA as MAP_SCHEMA, install_routes as install_map_routes
 
 ROOT = Path(__file__).resolve().parents[1]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
@@ -179,7 +180,7 @@ class Store:
         self.credentials_file = self.data_dir / "connector-secrets.json"
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
-            db.executescript(SCHEMA)
+            db.executescript(SCHEMA + MAP_SCHEMA)
         issued = {}
         with self.transaction() as db:
             for agent_id, name, kind in [("human", "Вы", "human"), ("codex", "Codex", "codex"), ("claude", "Claude Code", "claude")]:
@@ -641,13 +642,16 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             result = {"schema_version": 1, "exported_at": now(), "project": store.entity(db, "projects", project_id), "sections": store.entities(db, "sections", "WHERE project_id=?", (project_id,)), "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "notes": store.entities(db, "notes", "WHERE project_id=?", (project_id,)), "events": list(reversed(store.events(db, "WHERE project_id=?", (project_id,))))}
             result["subprojects"] = [item for item in result["sections"] if item.get("kind") == "subproject"]
             result["sections"] = [item for item in result["sections"] if item.get("kind") != "subproject"]
+            result['project_map'] = next(iter(store.entities(db, 'project_maps', 'WHERE id=?', (project_id,))), None)
+            result['project_map_revisions'] = [json.loads(row['payload']) for row in db.execute('SELECT payload FROM project_map_revisions WHERE project_id=? ORDER BY version', (project_id,))]
             return JSONResponse(result, headers={"Content-Disposition": f'attachment; filename="agentboard-{project_id}.json"'})
 
     @app.get("/api/connectors", dependencies=[Depends(authenticated_read)])
     def connectors():
         with store.connect() as db:
             installed = bool(getattr(sys, "frozen", False))
-            command = Path(sys.executable).with_name("AgentboardMCP.exe") if installed else Path(sys.executable)
+            from desktop.runtime import binary_name
+            command = Path(sys.executable).with_name(binary_name("AgentboardMCP")) if installed else Path(sys.executable)
             return {"base_url": base_url, "python_command": str(command.resolve()), "mcp_script": "--mcp" if installed else str((ROOT / "connectors" / "mcp_server.py").resolve()), "data_dir": str(store.data_dir), "desktop": installed, "credentials_file": str(store.credentials_file), "agents": store.agents(db)}
 
     @app.post("/api/agents")
@@ -663,6 +667,7 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             store.record(db, who, body.reason, "agent", agent_id, "agent.created", None, agent, session_id=session(request))
             return {"agent": agent, "token": token}
 
+    install_map_routes(app, store, actor, authenticated_read, session)
     dist = ROOT / "dist"
 
     @app.get("/{path:path}", include_in_schema=False)

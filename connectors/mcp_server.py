@@ -19,6 +19,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+if __package__ in {None, ''}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from server.project_map import MapFile, MapDiagram
 
 ROOT = Path(__file__).resolve().parents[1]
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -46,7 +49,11 @@ INSTRUCTIONS = (
     "task summaries preview dependency IDs (get_task keeps them all), history snapshots/notes preview long text and files. "
     "dashboard export retains full history. All tasks share one project board; choose task_type independently from status. "
     "Use optional subproject_id to group parallel work; create_subproject parent_id links nested workstreams. "
-    "last_seen means last API request, not a running agent session."
+    "last_seen means last API request, not a running agent session. "
+    "For project documentation read get_project_map; publish_project_map submits a complete safe file manifest "
+    "with SHA256 and structured descriptions plus Mermaid diagrams. Exclude credentials, private data, dependencies "
+    "and build outputs. Read source files in your own workspace; the connector never reads the repository. "
+    "Descriptions are drafts; source_revision is the analyzed snapshot, not evidence of current filesystem state."
 )
 
 
@@ -94,7 +101,8 @@ def validate_url(url: str) -> str:
 def default_data_dir() -> Path:
     """Installed clients keep personal state outside the application bundle."""
     if getattr(sys, "frozen", False):
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Agentboard"
+        from desktop.runtime import personal_dir
+        return personal_dir()
     return ROOT / "data"
 
 
@@ -117,11 +125,11 @@ def forwarding_target(data_dir: Path | None, url: str | None) -> Path | None:
     """An old durable VSIX companion follows the current proved runtime next session."""
     if not getattr(sys, "frozen", False) or data_dir is None or url is not None:
         return None
-    from desktop.runtime import VERSION
+    from desktop.runtime import VERSION, binary_name
     from desktop.updates import version_tuple
 
     data_dir = data_dir.resolve()
-    if Path(sys.executable).resolve() != (data_dir / "vscode-runtime" / VERSION / "AgentboardMCP.exe").resolve():
+    if Path(sys.executable).resolve() != (data_dir / "vscode-runtime" / VERSION / binary_name("AgentboardMCP")).resolve():
         return None
     runtime = json.loads((data_dir / "runtime.json").read_text(encoding="utf-8-sig"))
     if not isinstance(runtime, dict) or runtime.get("mode") != "vscode":
@@ -129,7 +137,7 @@ def forwarding_target(data_dir: Path | None, url: str | None) -> Path | None:
     if version_tuple(runtime.get("version")) <= version_tuple(VERSION):
         return None
     directory = data_dir / "vscode-runtime" / runtime["version"]
-    target = directory / "AgentboardMCP.exe"
+    target = directory / binary_name("AgentboardMCP")
     if not isinstance(runtime.get("base_url"), str):
         raise ValueError("Некорректный адрес новой MCP-версии DashAI")
     base_url = validate_url(runtime["base_url"])
@@ -141,7 +149,7 @@ def forwarding_target(data_dir: Path | None, url: str | None) -> Path | None:
             or not isinstance(runtime.get("instance_id"), str) or str(UUID(runtime["instance_id"])) != runtime["instance_id"].lower()
             or type(runtime.get("pid")) is not int or runtime["pid"] <= 0
             or address.hostname != "127.0.0.1" or address.port is None or not 1 <= address.port <= 65535
-            or not target.is_file() or not (directory / "Agentboard.exe").is_file()
+            or not target.is_file() or not (directory / binary_name("Agentboard")).is_file()
             or json.loads((directory / "_internal" / "package.json").read_text(encoding="utf-8"))["version"] != runtime["version"]):
         raise ValueError("Некорректный путь новой MCP-версии DashAI")
     with build_opener(ProxyHandler({}), NoRedirect()).open(
@@ -491,6 +499,35 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
         """Check this connector's API reachability. Returns no credentials; configured actor label is not a verified live session."""
         return {"api": api("GET", "/api/health"), "base_url": base_url,
                 "configured_identity": actor_id, "session_id": session_id, "transport": "stdio"}
+
+    @server.tool(annotations=READ)
+    def get_project_map(project_id: Identifier, path: str | None = None, diagram_id: str | None = None,
+                        version: Annotated[int, Field(ge=1)] | None = None,
+                        offset: Annotated[int, Field(ge=0)] = 0, limit: Limit = 50) -> dict[str, Any]:
+        """Read a bounded manifest or one full description/diagram. Read current version before publishing. A past version is immutable."""
+        data = api('GET', entity_path('projects', project_id) + '/map' + (f'?version={version}' if version else ''))
+        result = {k: data.get(k) for k in ('project_id', 'version', 'source_revision', 'updated_at', 'author_name', 'document')}
+        if path is not None:
+            result['file'] = next((f for f in data['files'] if f['path'] == path), None)
+        elif diagram_id is not None:
+            result['diagram'] = next((d for d in data['diagrams'] if d['id'] == diagram_id), None)
+        else:
+            result.update(files=[{k: f.get(k) for k in ('path', 'kind', 'sha256', 'status')} for f in data['files'][offset:offset+limit]],
+                          total_files=len(data['files']), next_offset=offset+limit if offset+limit<len(data['files']) else None,
+                          diagrams=[{k: d.get(k) for k in ('id', 'title', 'notation', 'status')} for d in data['diagrams']])
+        return result
+
+    @server.tool(annotations=WRITE)
+    def publish_project_map(project_id: Identifier, expected_version: Annotated[int, Field(ge=0)],
+                            source_revision: Title, files: Annotated[list[MapFile], Field(max_length=2000)],
+                            reason: Reason, idempotency_key: Key,
+                            diagrams: Annotated[list[MapDiagram], Field(max_length=100)] | None = None) -> dict[str, Any]:
+        """Publish complete manifest through the shared HTTP API. Omitted descriptions are preserved and marked stale after hash changes. diagrams=null preserves existing diagrams; [] explicitly clears them. New prose is draft, not verified."""
+        return api('PUT', entity_path('projects', project_id) + '/map', {
+            'expected_version': expected_version, 'source_revision': source_revision,
+            'files': [f.model_dump() for f in files], 'diagrams': [d.model_dump() for d in diagrams] if diagrams is not None else None,
+            'reason': reason, 'idempotency_key': idempotency_key,
+        })
 
     return server
 

@@ -9,6 +9,13 @@ const runFile = promisify(execFile);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let heartbeat;
 
+const binaryName = (name, platform = process.platform) => name + (platform === 'win32' ? '.exe' : '');
+function personalDataDir(platform = process.platform) {
+  const home = require('node:os').homedir();
+  return platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'Agentboard') :
+    path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Agentboard');
+}
+
 function parseRuntime(value, dataDir) {
   if (value?.schema_version !== 1 || !/^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.test(value.base_url || '') ||
       Number(new URL(value.base_url).port) > 65535 || typeof value.data_dir !== 'string' ||
@@ -67,7 +74,10 @@ async function copyRuntime(extensionDir, dataDir, version) {
   await fs.mkdir(parent, { recursive: true });
   const staging = path.join(parent, 'staging-' + crypto.randomUUID());
   try {
-    await fs.cp(path.join(extensionDir, 'runtime', 'Agentboard'), staging, { recursive: true });
+    await fs.cp(path.join(extensionDir, 'runtime', 'Agentboard'), staging, { recursive: true, verbatimSymlinks: true });
+    if (process.platform === 'darwin') {
+      for (const name of ['Agentboard', 'AgentboardMCP']) await fs.chmod(path.join(staging, name), 0o755);
+    }
     if (JSON.parse(await fs.readFile(path.join(staging, '_internal', 'package.json'), 'utf8')).version !== version) {
       throw new Error('Версия встроенного приложения не совпадает с расширением.');
     }
@@ -120,7 +130,7 @@ function boardHtml(runtime) {
 function activate(context) {
   const vscode = require('vscode');
   const version = context.extension.packageJSON.version;
-  const dataDir = path.join(process.env.LOCALAPPDATA || path.join(require('node:os').homedir(), 'AppData', 'Local'), 'Agentboard');
+  const dataDir = personalDataDir();
   let panel, panelInstance, runtime, starting;
   const output = vscode.window.createOutputChannel('DashAI');
   context.subscriptions.push(output);
@@ -132,7 +142,8 @@ function activate(context) {
   async function ensureRuntime() {
     if (starting) return starting;
     starting = (async () => {
-      if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Это расширение предназначено для Windows x64.');
+      if (!(process.platform === 'win32' && process.arch === 'x64') &&
+          !(process.platform === 'darwin' && ['arm64', 'x64'].includes(process.arch))) throw new Error('DashAI поддерживает Windows x64 и macOS Apple Silicon / Intel.');
       if (!vscode.workspace.isTrusted) throw new Error('Откройте доверенную папку проекта.');
       let existing = await discover(dataDir);
       if (existing && needsRuntimeUpgrade(existing, version)) {
@@ -143,7 +154,7 @@ function activate(context) {
       }
       if (!existing) {
         const directory = await copyRuntime(context.extensionPath, dataDir, version);
-        const child = spawn(path.join(directory, 'Agentboard.exe'), ['--vscode', '--data-dir', dataDir], {
+        const child = spawn(path.join(directory, binaryName('Agentboard')), ['--vscode', '--data-dir', dataDir], {
           cwd: directory, windowsHide: true, detached: true, stdio: 'ignore',
         });
         let spawnError;
@@ -176,6 +187,14 @@ function activate(context) {
       if (message.action === 'clipboard' && typeof message.text === 'string' && message.text.length <= 200000) {
         await vscode.env.clipboard.writeText(message.text);
         result = true;
+      } else if (message.action === 'save_document' && /^dashai-(documentation|diagram|map)\.(md|html|mmd|json)$/.test(message.filename || '') && typeof message.content === 'string' && Buffer.byteLength(message.content, 'utf8') <= 6000000) {
+        const extension = message.filename.split('.').pop();
+        const destination = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(path.join(require('node:os').homedir(), message.filename)),
+          filters: { 'Документация': [extension] }, saveLabel: 'Сохранить документ',
+        });
+        if (!destination) result = false;
+        else { await vscode.workspace.fs.writeFile(destination, Buffer.from(message.content, 'utf8')); result = true; }
       } else if (message.action === 'export' && /^[a-f0-9-]{36}$/.test(message.project_id || '')) {
         const destination = await vscode.window.showSaveDialog({
           defaultUri: vscode.Uri.file(path.join(require('node:os').homedir(), `dashai-${message.project_id}.json`)),
@@ -218,9 +237,9 @@ function activate(context) {
     else folder = (await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Подключить агентов' }))?.[0];
     const uri = folder?.uri || folder;
     if (!uri) return;
-    if (uri.scheme !== 'file') throw new Error('Подключение доступно для локальной папки Windows.');
+    if (uri.scheme !== 'file') throw new Error('Подключение доступно для локальной папки проекта.');
     const directory = await copyRuntime(context.extensionPath, dataDir, version);
-    await runFile(path.join(directory, 'AgentboardMCP.exe'), ['--setup-connectors', '--project-root', uri.fsPath, '--data-dir', dataDir], {
+    await runFile(path.join(directory, binaryName('AgentboardMCP')), ['--setup-connectors', '--project-root', uri.fsPath, '--data-dir', dataDir], {
       cwd: directory, windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024,
     });
     vscode.window.showInformationMessage('Конфигурации Codex и Claude Code сохранены. Начните новую сессию клиента и разрешите project MCP, если он запросит доступ.');
@@ -255,4 +274,4 @@ function activate(context) {
 }
 
 function deactivate() { clearInterval(heartbeat); heartbeat = undefined; }
-module.exports = { activate, deactivate, parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade };
+module.exports = { activate, deactivate, parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, binaryName, personalDataDir };

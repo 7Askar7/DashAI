@@ -12,7 +12,7 @@ if (insideVSCode) window.addEventListener("message", event => {
   else request.resolve(event.data.result === true);
 });
 
-export function hostRequest(action: "clipboard" | "export", data: Record<string, string>): Promise<boolean> {
+export function hostRequest(action: "clipboard" | "export" | "save_document", data: Record<string, string>): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = window.setTimeout(() => {

@@ -6,6 +6,8 @@
 
 ## Открыть
 
+**macOS:** начиная со сборок 1.5.1 расширение получает отдельные нативные VSIX: `darwin-arm64` для Apple Silicon и `darwin-x64` для Intel. Пакет `win32-x64` на Mac не устанавливается. Сборка и проверка обеих архитектур выполняются в workflow **macOS VS Code packages**; доступность обновления в Marketplace требует загрузки этих пакетов издателем. Личные данные Mac: `~/Library/Application Support/Agentboard`. Отдельный установщик EXE предназначен для Windows. [Сборка и установка](docs/vscode.md).
+
 **В VS Code:** установите [DashAI из Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=7Askar7.dashai) (Extensions → поиск «DashAI») или файл `Agentboard-VSCode-<версия>-win32-x64.vsix` из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest) через Extensions → «…» → **Install from VSIX…** — не обе копии сразу. Затем нажмите значок DashAI слева → **Открыть доску**. Dashboard откроется во вкладке редактора; Python, Node.js и отдельное приложение устанавливать не требуется. Данные остаются на вашем компьютере. [Установка, подключение агентов и обновления расширения](docs/vscode.md).
 
 Для обычного пользователя Windows 10/11 x64: **[скачать установщик последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest)**. Установка для текущего пользователя, без прав администратора, Python и Node.js. Ярлык запускает локальный dashboard; кнопка лаунчера подключает агентов к выбранной папке проекта. Каждая установка хранит свою базу в `%LOCALAPPDATA%\Agentboard`.
@@ -100,6 +102,10 @@ MCP tools: `list_projects`, `create_project`, `get_board`, `ready_tasks`, `creat
 Подробные команды, форматы токенов и contracts: [docs/connectors.md](docs/connectors.md). Правила работы агентов: [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md). Подключение соответствует официальным инструкциям [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) и [Claude Code MCP](https://code.claude.com/docs/en/mcp).
 
 ## Что работает
+
+- Карта проекта: дерево опубликованных агентом файлов/папок с объяснениями «что / как / зачем», поиском, автором, статусом и историей версий.
+- Архитектура: реальные Mermaid-схемы C4 L1/L2/L3, UML Sequence/State, ERD и Flowchart; легенды, область и объяснение.
+- Документация: сохранённый на сервере состав разделов/схем, Markdown, автономный HTML и печать/PDF. Изменённые hashes помечают устаревшие описания, включая связанные файлы. [Рабочий процесс и MCP-контракт](docs/project-map.md).
 
 - Отдельные проекты; единая доска всех задач проекта по пяти статусам. Карточки создаются прямо в проекте, без пользовательских разделов.
 - Поле «Тип задачи»: исследование, разработка, тестирование, исправление, документация или другое. Тип показан на карточке; его можно выбрать при создании, изменить с причиной и использовать в фильтре.

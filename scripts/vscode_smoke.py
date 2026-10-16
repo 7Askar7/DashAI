@@ -1,4 +1,4 @@
-"""Install the real VSIX into an isolated VS Code and exercise its actual Webview.
+"""Load the real VSIX into an isolated VS Code and exercise its actual Webview.
 
 Requires installed Windows x64 VS Code and the repository's dev Python environment.
 Uses Microsoft's extension-test entry point and Playwright's browser CDP support.
@@ -10,7 +10,6 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import socket
 import subprocess
 import time
@@ -172,6 +171,14 @@ async def check_ui(directory: Path, port: int, environment: dict):
                     await tool("log_change", {"task_id": task["id"], "summary": "Real MCP call from frozen companion",
                         "files": ["scripts/vscode_smoke.py"], "verification": "Task appeared in VSCode webview",
                         "reason": "Record check", "idempotency_key": "vscode-change"})
+                    await tool("publish_project_map", {"project_id": project["id"], "expected_version": 0,
+                        "source_revision": "isolated-vsix-qa", "reason": "Verify bundled map through MCP",
+                        "files": [{"path": "src/App.tsx", "sha256": "1" * 64,
+                            "description": {"title": "VSIX project map", "summary": "Published through frozen MCP",
+                                "purpose": "Verify shared documentation in the editor", "workflow": ["Read the shared API"]}}],
+                        "diagrams": [{"id": "qa-flow", "title": "VSIX flow", "notation": "flowchart",
+                            "scope": "Isolated QA", "legend": "Arrows show publication", "explanation": "MCP publishes to the UI",
+                            "source": "flowchart LR\n  MCP --> API --> UI", "related_paths": ["src/App.tsx"]}]})
                     await wait_ui("Array.from(document.querySelectorAll('.kanban-card')).some(b=>b.textContent.includes(" + json.dumps(task["title"]) + "))")
                     await command("blocked-stop")
                     assert api(runtime["base_url"] + "/api/health")["mcp_running"] is True
@@ -190,6 +197,25 @@ async def check_ui(directory: Path, port: int, environment: dict):
             await asyncio.sleep(.1)
         assert (directory / "project-export.json").is_file(), "Actual webview-to-host export writes a file"
         await command("export", project_id=project["id"], task_title=task["title"])
+        await click("Карта проекта")
+        await wait_ui("document.querySelector('.map-file-article')?.textContent.includes('VSIX project map')")
+        await click("Документация")
+        await wait_ui("!!document.querySelector('.map-checkbox')")
+        await evaluate("Array.from(document.querySelectorAll('.map-checkbox')).find(label=>label.textContent.includes('VSIX flow')).click()")
+        await wait_ui("document.querySelector('.map-diagram iframe')?.srcdoc.includes('<svg')", timeout=45)
+        for label, suffix in (("Markdown", "md"), ("HTML", "html")):
+            await click(label)
+            exported = directory / ("dashai-documentation." + suffix)
+            deadline = time.monotonic() + 15
+            while not exported.is_file() and time.monotonic() < deadline:
+                await asyncio.sleep(.1)
+            assert exported.is_file(), "Documentation host bridge writes " + suffix
+            text = exported.read_text(encoding="utf-8")
+            assert "VSIX project map" in text and "VSIX flow" in text
+            assert ("<svg" in text and "<script" not in text) if suffix == "html" else "```mermaid" in text
+        await evaluate("(() => { const input=Array.from(document.querySelectorAll('.map-settings label')).find(label=>label.textContent.includes('Причина сохранения')).querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Verify persistent VSIX composition'); input.dispatchEvent(new Event('input',{bubbles:true})); })()")
+        await click("Сохранить состав")
+        await wait_ui("document.querySelector('.map-settings button')?.disabled && !document.querySelector('.map-settings').disabled")
         await browser.contexts[0].pages[0].screenshot(path=str(directory / "editor-board.png"))
         await command("restart")
         next_runtime = read_json(directory / "runtime-after-restart.json")
@@ -198,9 +224,10 @@ async def check_ui(directory: Path, port: int, environment: dict):
         assert companion.is_file() and (repository / ".mcp.json").is_file()
         await command("finish")
         return {"status": "passed", "vscode": ready["vscode"], "extension_version": runtime["version"],
-            "parent_origins": origins["ancestors"], "checks": ["actual VSIX install", "real editor iframe", "UI task creation",
+            "parent_origins": origins["ancestors"], "checks": ["isolated packaged VSIX", "real editor iframe", "UI task creation",
                 "five-column shared Kanban", "frozen MCP task/claim/change visible", "MCP shutdown guard", "VSCode clipboard bridge",
-                "native export bridge (save-dialog selection stubbed)", "persistent data after runtime restart", "durable MCP configs"]}
+                "native export bridge (save-dialog selection stubbed)", "frozen MCP map in editor and Mermaid rendering",
+                "Markdown and HTML documentation host bridge", "persistent data after runtime restart", "durable MCP configs"]}
 
 
 def main():
@@ -226,23 +253,22 @@ def main():
     (driver / "index.cjs").write_text((ROOT / "vscode-extension" / "tests" / "actual-driver.cjs").read_text(encoding="utf-8"), encoding="utf-8")
     environment = dict(os.environ, LOCALAPPDATA=str(directory / "local"), USERNAME="DashAI-QA-" + uuid4().hex,
         DASHAI_VSCODE_QA=str(directory))
-    environment.pop("ELECTRON_RUN_AS_NODE", None)
+    # A Codex terminal can inherit VS Code's extension-host entry point/cache.
+    # A separate editor must bootstrap itself rather than inherit those internals.
+    for name in tuple(environment):
+        if name.startswith("VSCODE_") or name == "ELECTRON_RUN_AS_NODE":
+            environment.pop(name)
     environment.pop("AGENTBOARD_TOKEN", None)
     # The CLI is Microsoft's own installed launcher. No working editor profile is changed.
-    cli_env = dict(environment, ELECTRON_RUN_AS_NODE="1")
-    cli = args.code.parent / "resources" / "app" / "out" / "cli.js"
-    if not cli.is_file():
-        launcher = (args.code.parent / "bin" / "code.cmd").read_text(encoding="utf-8")
-        relative = re.search(r'%~dp0\.\.\\([^"\r\n]+cli\.js)', launcher)
-        assert relative, "Installed code.cmd must identify the current CLI"
-        cli = args.code.parent / relative.group(1)
+    cli = args.code.parent / "bin" / "code.cmd"
+    assert cli.is_file(), "Installed VS Code must include its official CLI launcher"
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = subprocess.SW_HIDE
-    install = subprocess.run([str(args.code), str(cli), "--user-data-dir", str(profile), "--extensions-dir", str(extensions),
-        "--install-extension", str(vsix), "--force"], env=cli_env, capture_output=True, text=True, timeout=120, startupinfo=startup)
-    (directory / "install.log").write_text(install.stdout + install.stderr, encoding="utf-8")
-    assert install.returncode == 0, install.stdout + install.stderr
+    with (directory / "install.log").open("w", encoding="utf-8") as install_log:
+        install = subprocess.run([str(cli), "--user-data-dir", str(profile), "--extensions-dir", str(extensions),
+            "--install-extension", str(vsix), "--force"], env=environment, stdout=install_log, stderr=subprocess.STDOUT, timeout=120, startupinfo=startup)
+    assert install.returncode == 0, (directory / "install.log").read_text(encoding="utf-8")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -254,6 +280,7 @@ def main():
         process = subprocess.Popen(arguments, env=environment, stdout=output, stderr=subprocess.STDOUT, startupinfo=startup)
         try:
             results = asyncio.run(check_ui(directory, port, environment))
+            results["installation"] = "official VS Code CLI"
             process.wait(timeout=30)
             assert process.returncode == 0, "VS Code extension tests returned failure"
             (directory / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")

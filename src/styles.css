@@ -18,6 +18,8 @@
   --red: #fba7a7;
   color-scheme: dark;
 }
+.project-tabs { flex-wrap: wrap; gap: 10px; }
+.project-tabs .tabs-nav { flex-wrap: wrap; min-width: 0; }
 * {
   box-sizing: border-box;
 }

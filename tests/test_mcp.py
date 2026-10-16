@@ -1,4 +1,5 @@
 """Real stdio MCP clients talking to one separately running HTTP/SQLite server."""
+from desktop.runtime import binary_name, personal_dir
 
 import asyncio
 import io
@@ -55,10 +56,12 @@ def test_desktop_connector_config_and_runtime_discovery(tmp_path, monkeypatch):
     (project / ".codex" / "config.toml").write_text('model="keep"\n[mcp_servers.other]\ncommand="keep"\n', encoding="utf-8")
     install = tmp_path / "Programs" / "Agentboard"
     install.mkdir(parents=True)
-    executable = install / "AgentboardMCP.exe"
+    executable = install / binary_name("AgentboardMCP")
     executable.touch()
     local = tmp_path / "Local"
-    data = local / "Agentboard"
+    monkeypatch.setenv("HOME", str(local))
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    data = personal_dir()
     data.mkdir(parents=True)
     credentials = data / "connector-secrets.json"
     credentials.write_text(json.dumps({"schema_version": 1, "agents": {
@@ -97,14 +100,14 @@ def test_desktop_connector_config_and_runtime_discovery(tmp_path, monkeypatch):
 def test_frozen_mcp_forwarding_checks_version_paths_and_live_proof(tmp_path, monkeypatch):
     from desktop import runtime as desktop_runtime
     data = tmp_path / "personal data"
-    old = data / "vscode-runtime" / "1.4.0" / "AgentboardMCP.exe"
+    old = data / "vscode-runtime" / "1.4.0" / binary_name("AgentboardMCP")
     old.parent.mkdir(parents=True)
     old.touch()
     directory = data / "vscode-runtime" / "1.5.0"
     (directory / "_internal").mkdir(parents=True)
-    target = directory / "AgentboardMCP.exe"
+    target = directory / binary_name("AgentboardMCP")
     target.touch()
-    (directory / "Agentboard.exe").touch()
+    (directory / binary_name("Agentboard")).touch()
     marker = directory / "_internal" / "package.json"
     marker.write_text('{"version":"1.5.0"}', encoding="utf-8")
     descriptor = {"schema_version": 1, "mode": "vscode", "version": "1.5.0", "data_dir": str(data),
@@ -420,6 +423,13 @@ def test_mcp_workflow_and_project_setup(tmp_path, monkeypatch):
                         project = await call(codex_client, "create_project", project_args)
                         retry = await call(codex_client, "create_project", project_args)
                         assert project["id"] == retry["id"]
+                        assert (await call(codex_client, 'get_project_map', {'project_id': project['id']}))['version'] == 0
+                        published = await call(codex_client, 'publish_project_map', {'project_id': project['id'], 'expected_version': 0,
+                            'source_revision': 'stdio-test', 'files': [{'path': 'src/App.tsx', 'sha256': '1'*64,
+                            'description': {'title': 'UI', 'summary': 'Shared user interface', 'purpose': 'Manage work'}}],
+                            'reason': 'Verify shared documentation API', 'idempotency_key': 'stdio-map'})
+                        assert published['version'] == 1
+                        assert (await call(claude_client, 'get_project_map', {'project_id': project['id'], 'path': 'src/App.tsx'}))['file']['description']['title'] == 'UI'
                         assert "HTTP_409" in await call(codex_client, "create_project", {**project_args, "name": "Different"}, error=True)
                         shared = await call(claude_client, "list_projects", {})
                         assert len(shared["projects"]) == 1 and shared["projects"][0]["id"] == project["id"]

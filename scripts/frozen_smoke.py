@@ -1,12 +1,15 @@
 """Exercise the real frozen GUI server and MCP companion with an isolated personal store."""
+import argparse
 import asyncio
 import json
+import os
 import socket
 import subprocess
 import tempfile
 import time
 import tomllib
 from pathlib import Path
+from uuid import uuid4
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
@@ -17,9 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "artifacts" / "desktop" / "Agentboard"
 
 
-async def protocol(command: str, data: Path) -> None:
+async def protocol(command: str, data: Path, environment: dict) -> None:
     parameters = StdioServerParameters(command=command, args=["--mcp", "--agent", "codex",
-                                                              "--data-dir", str(data)])
+                                                              "--data-dir", str(data)], env=environment)
     with (data.parent / "mcp-stderr.log").open("w", encoding="utf-8") as errlog:
         await protocol_session(parameters, errlog)
     errors = (data.parent / "mcp-stderr.log").read_text(encoding="utf-8")
@@ -30,6 +33,11 @@ async def protocol_session(parameters, errlog) -> None:
     async with stdio_client(parameters, errlog=errlog) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
+            data_dir = Path(parameters.args[parameters.args.index('--data-dir') + 1])
+            runtime = json.loads((data_dir / 'runtime.json').read_text(encoding='utf-8'))
+            opener = build_opener(ProxyHandler({}))
+            with opener.open(runtime['base_url'] + '/api/health', timeout=5) as response:
+                assert json.load(response)['mcp_running'] is True
             tools = {tool.name for tool in (await session.list_tools()).tools}
             assert {"create_project", "get_board", "create_task", "log_change", "connector_status", "create_subproject", "update_subproject"} <= tools
 
@@ -44,6 +52,13 @@ async def protocol_session(parameters, errlog) -> None:
             assert status["api"]["status"] == "ok"
             project = await call("create_project", {"name": "Frozen smoke", "reason": "Verify bundled MCP",
                                                        "idempotency_key": "frozen-project"})
+            assert (await call('get_project_map', {'project_id': project['id']}))['version'] == 0
+            publication = await call('publish_project_map', {'project_id': project['id'], 'expected_version': 0,
+                'source_revision': 'frozen-check', 'files': [{'path': 'src/App.tsx', 'sha256': '1'*64,
+                'description': {'title': 'UI', 'summary': 'Shared project UI', 'purpose': 'Human workspace'}}],
+                'reason': 'Verify bundled documentation API', 'idempotency_key': 'frozen-map'})
+            assert publication['version'] == 1
+            assert (await call('get_project_map', {'project_id': project['id'], 'path': 'src/App.tsx'}))['file']['description']['title'] == 'UI'
             task = await call("create_task", {"project_id": project["id"], "task_type": "testing",
                                                "title": "Frozen protocol works", "rationale": "Check distributed executable",
                                                "acceptance_criteria": "Shared API and stdio tools operate",
@@ -97,26 +112,34 @@ async def protocol_session(parameters, errlog) -> None:
 
 
 def main() -> None:
-    gui = BUNDLE / "Agentboard.exe"
-    companion = BUNDLE / "AgentboardMCP.exe"
+    gui = BUNDLE / ("Agentboard.exe" if os.name == "nt" else "Agentboard")
+    companion = BUNDLE / ("AgentboardMCP.exe" if os.name == "nt" else "AgentboardMCP")
     assert gui.is_file() and companion.is_file(), "Build the desktop bundle first"
     expected_version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
     version = subprocess.run([str(companion), "--version"], capture_output=True, text=True, timeout=30)
     assert version.returncode == 0 and version.stdout.strip() == expected_version, version.stderr
     with tempfile.TemporaryDirectory(prefix="agentboard-frozen-") as directory:
         data = Path(directory) / "personal data"
+        # The production app's single-instance mutex must remain untouched by QA.
+        environment = dict(os.environ, USERNAME="DashAI-QA-" + uuid4().hex,
+                           LOCALAPPDATA=str(Path(directory) / "local"))
+        environment.pop("AGENTBOARD_TOKEN", None)
         repository = Path(directory) / "repo with spaces"
         repository.mkdir()
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
-        process = subprocess.Popen([str(gui), "--headless", "--data-dir", str(data), "--port", str(port)])
+        process = subprocess.Popen([str(gui), "--headless", "--data-dir", str(data), "--port", str(port)],
+                                   env=environment, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         opener = build_opener(ProxyHandler({}))
         try:
             deadline = time.monotonic() + 45
             while True:
-                assert process.poll() is None, "Frozen GUI server exited before health check"
+                if process.poll() is not None:
+                    log = data / "logs" / "desktop.log"
+                    raise AssertionError("Frozen GUI server exited before health check: " +
+                                         (log.read_text(encoding="utf-8") if log.is_file() else "No startup log"))
                 try:
                     with opener.open(url + "/api/health", timeout=2) as response:
                         assert json.load(response)["status"] == "ok"
@@ -140,7 +163,7 @@ def main() -> None:
             assert Path(metadata["data_dir"]).samefile(data)
             assert metadata["desktop"] is True and metadata["mcp_script"] == "--mcp"
             setup = subprocess.run([str(companion), "--setup-connectors", "--project-root", str(repository),
-                                    "--data-dir", str(data)], capture_output=True, text=True, timeout=30)
+                                    "--data-dir", str(data)], capture_output=True, text=True, timeout=30, env=environment)
             assert setup.returncode == 0, setup.stderr
             claude = json.loads((repository / ".mcp.json").read_text(encoding="utf-8"))
             codex = tomllib.loads((repository / ".codex" / "config.toml").read_text(encoding="utf-8"))
@@ -151,7 +174,7 @@ def main() -> None:
                 assert Path(entry["args"][entry["args"].index("--credentials") + 1]).samefile(data / "connector-secrets.json")
                 assert "--url" not in entry["args"]
             assert Path(codex["mcp_servers"]["agentboard"]["cwd"]).samefile(repository)
-            asyncio.run(protocol(str(companion), data))
+            asyncio.run(protocol(str(companion), data, environment))
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -160,4 +183,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--bundle', type=Path, default=BUNDLE)
+    BUNDLE = parser.parse_args().bundle.resolve()
     main()

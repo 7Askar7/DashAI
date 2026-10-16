@@ -168,6 +168,9 @@ export const actionLabels: Record<string, string> = {
   "note.created": "добавил запись",
   "change.logged": "записал правку",
   "agent.created": "добавил агента",
+  "project_map.published": "опубликовал карту проекта",
+  "project_map.document_updated": "сохранил состав документации",
+  "project_map.reviewed": "проверил описание или схему",
 };
 
 export class ApiError extends Error {

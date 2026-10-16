@@ -7,7 +7,14 @@ const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const vm = require('node:vm');
-const { parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade } = require('../extension.cjs');
+const { parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, binaryName, personalDataDir } = require('../extension.cjs');
+
+test('macOS uses native binary names and Application Support; Windows retains its existing location', () => {
+  assert.equal(binaryName('AgentboardMCP', 'darwin'), 'AgentboardMCP');
+  assert.equal(binaryName('Agentboard', 'win32'), 'Agentboard.exe');
+  assert.equal(personalDataDir('darwin'), path.join(os.homedir(), 'Library', 'Application Support', 'Agentboard'));
+  assert.equal(personalDataDir('win32'), path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Agentboard'));
+});
 
 test('Discovery verifies exact instance without sending its expected nonce', async () => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentboard-discovery-'));
@@ -58,14 +65,16 @@ test('Concurrent runtime staging retains durable MCP path and personal data', as
   await fs.mkdir(path.join(bundle, '_internal'), { recursive: true });
   await fs.mkdir(data);
   await fs.writeFile(path.join(bundle, '_internal', 'package.json'), JSON.stringify({ version: '1.4.0' }));
-  await fs.writeFile(path.join(bundle, 'AgentboardMCP.exe'), 'fixture');
+  await fs.writeFile(path.join(bundle, binaryName('AgentboardMCP')), 'fixture');
+  await fs.writeFile(path.join(bundle, binaryName('Agentboard')), 'fixture');
   await fs.writeFile(path.join(data, 'agentboard.sqlite3'), 'personal data fixture');
   try {
     const [first, second] = await Promise.all([copyRuntime(extension, data, '1.4.0'), copyRuntime(extension, data, '1.4.0')]);
     assert.equal(first, second);
     assert.deepEqual(await fs.readdir(path.join(data, 'vscode-runtime')), ['1.4.0']);
     await fs.rename(extension, path.join(directory, 'removed-extension'));
-    assert.equal(await fs.readFile(path.join(first, 'AgentboardMCP.exe'), 'utf8'), 'fixture');
+    assert.equal(await fs.readFile(path.join(first, binaryName('AgentboardMCP')), 'utf8'), 'fixture');
+    if (process.platform === 'darwin') assert((await fs.stat(path.join(first, 'AgentboardMCP'))).mode & 0o111);
     assert.equal(await fs.readFile(path.join(data, 'agentboard.sqlite3'), 'utf8'), 'personal data fixture');
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });

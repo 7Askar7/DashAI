@@ -18,7 +18,10 @@ exports.run = async function () {
   const productAPI = createRequire(path.join(extension.extensionPath, 'extension.cjs'))('vscode');
   const originalSaveDialog = productAPI.window.showSaveDialog;
   const originalClipboard = await vscode.env.clipboard.readText();
-  productAPI.window.showSaveDialog = async () => vscode.Uri.file(path.join(directory, 'project-export.json'));
+  productAPI.window.showSaveDialog = async options => {
+    const name = path.basename(options.defaultUri.fsPath);
+    return vscode.Uri.file(path.join(directory, name.startsWith('dashai-documentation.') ? name : 'project-export.json'));
+  };
   let lastCommand = 0;
   try {
     const api = await extension.activate();

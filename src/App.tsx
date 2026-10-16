@@ -3,6 +3,8 @@ import {
   useId,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -59,8 +61,9 @@ import {
 } from "./api";
 import KanbanBoard from "./KanbanBoard";
 import { insideVSCode, hostRequest, writeClipboard } from "./host";
+const ProjectMap = lazy(() => import('./ProjectMap'));
 
-type View = "overview" | "board" | "project_history" | "history" | "connectors";
+type View = "overview" | "board" | "project_history" | "history" | "connectors" | "map" | "architecture" | "documentation";
 type Modal =
   | { kind: "project"; project?: Project }
   | { kind: "subproject"; subproject?: Subproject; parent_id?: string }
@@ -1448,7 +1451,7 @@ export default function App() {
     [projectId, setProjectId] = useState<string | null>(() =>
       localStorage.getItem("agentboard.project"),
     ),
-    [view, setView] = useState<View>("board"),
+    [view, setViewState] = useState<View>("board"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [syncAt, setSyncAt] = useState<string | null>(null),
@@ -1458,6 +1461,14 @@ export default function App() {
     [drawerBoard, setDrawerBoard] = useState<Board | null>(null),
     [toast, setToast] = useState(""),
     [mobileMenu, setMobileMenu] = useState(false);
+  const [mapDirty,setMapDirty]=useState(false);
+  function setView(next:View) {
+    if(next!==view&&mapDirty&&!['map','architecture','documentation'].includes(next)) {
+      if(!window.confirm('Состав документа не сохранён. Покинуть карту и потерять эти настройки?'))return;
+      setMapDirty(false);
+    }
+    setViewState(next);
+  }
   const [query, setQuery] = useState(""),
     [taskTypeFilter, setTaskTypeFilter] = useState(""),
     [subprojectFilter, setSubprojectFilter] = useState(""),
@@ -1611,8 +1622,10 @@ export default function App() {
     }
   }
   function selectProject(id: string) {
+    if(mapDirty&&!window.confirm('Состав документа не сохранён. Перейти к другому проекту?'))return;
+    setMapDirty(false);
     setProjectId(id);
-    setView("board");
+    setViewState("board");
     setQuery("");
     setTaskTypeFilter("");
     setAgentFilter("");
@@ -1734,7 +1747,7 @@ export default function App() {
             .toLocaleLowerCase("ru")
             .includes(query.toLocaleLowerCase("ru"))),
     ) || [];
-  const isProjectView = view === "board" || view === "project_history";
+  const isProjectView = ["board", "project_history", "map", "architecture", "documentation"].includes(view);
   const project = board?.project;
   return (
     <div className="app-shell">
@@ -2132,6 +2145,7 @@ export default function App() {
                     <FolderKanban size={15} />
                     Доска<span className="count">{board.tasks.length}</span>
                   </button>
+                  {(['map','architecture','documentation'] as const).map(mode=><button key={mode} className={view===mode?'selected':''} onClick={()=>setView(mode)}>{mode==='map'?<FileCode2 size={15}/>:mode==='architecture'?<GitBranch size={15}/>:<List size={15}/>}{{map:'Карта проекта',architecture:'Архитектура',documentation:'Документация'}[mode]}</button>)}
                   <button
                     className={view === "project_history" ? "selected" : ""}
                     onClick={() => setView("project_history")}
@@ -2158,6 +2172,7 @@ export default function App() {
                   </button>
                 </div>
               </div>
+              {(view==='map'||view==='architecture'||view==='documentation')&&<Suspense fallback={<p className="muted">Загрузка карты проекта…</p>}><ProjectMap key={board.project.id} project={board.project} mode={view} onNotify={notify} onDirtyChange={setMapDirty} onShowMap={()=>setView('map')}/></Suspense>}
               {view === "board" && (
                 <>
                   {!!board.subprojects?.length && <details className="subprojects-panel">
