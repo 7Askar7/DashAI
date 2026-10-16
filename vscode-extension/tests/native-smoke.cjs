@@ -53,7 +53,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const child = spawn(vscodeExecutablePath, [repository, '--user-data-dir', profile, '--extensions-dir', extensions,
     '--extensionDevelopmentPath=' + driver, '--extensionTestsPath=' + path.join(driver, 'index.cjs'),
     '--no-sandbox', '--disable-gpu-sandbox', '--no-cached-data', '--disable-workspace-trust',
-    '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-telemetry', '--log', 'trace'],
+    '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-telemetry'],
   { env: environment, stdio: ['ignore', log.fd, log.fd] });
   let launchError, exit, result, failure;
   child.once('error', error => { launchError = error; });
