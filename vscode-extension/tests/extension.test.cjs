@@ -80,7 +80,12 @@ test('Concurrent runtime staging retains durable MCP path and personal data', as
 });
 
 test('Webview confines resources and messages to the validated runtime frame', () => {
-  const html = boardHtml({ base_url: 'http://127.0.0.1:4243' });
+  const runtime = { base_url: 'http://127.0.0.1:4243', version: '1.5.0', instance_id: crypto.randomUUID() };
+  const html = boardHtml(runtime);
+  const frame = content => content.match(/<iframe[^>]*src="([^"]+)"/)[1];
+  assert.equal(new URL(frame(html).replaceAll('&amp;', '&')).searchParams.get('runtime'), `${runtime.version}-${runtime.instance_id}`);
+  assert.notEqual(frame(html), frame(boardHtml({ ...runtime, version: '1.5.2' })));
+  assert.notEqual(frame(html), frame(boardHtml({ ...runtime, instance_id: crypto.randomUUID() })));
   assert.match(html, /default-src 'none'; frame-src http:\/\/127\.0\.0\.1:4243/);
   assert.match(html, /event.source === frame.contentWindow && event.origin === origin/);
   assert.match(html, /nonce="[a-f0-9]{48}"/);

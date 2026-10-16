@@ -149,6 +149,7 @@ def main() -> None:
                         raise AssertionError("Frozen GUI server did not become healthy")
                     time.sleep(0.25)
             with opener.open(url, timeout=5) as response:
+                assert response.headers.get('Cache-Control') == 'no-cache'
                 page = response.read()
                 assert page == (BUNDLE / "_internal" / "dist" / "index.html").read_bytes()
                 assert b"<title>DashAI" in page

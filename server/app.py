@@ -676,10 +676,10 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             raise HTTPException(404, "API маршрут не найден")
         candidate = (dist / path).resolve()
         if candidate.is_relative_to(dist.resolve()) and candidate.is_file():
-            return FileResponse(candidate)
+            return FileResponse(candidate, headers={"Cache-Control": "no-cache"} if candidate.suffix == ".html" else None)
         index = dist / "index.html"
         if index.is_file():
-            return FileResponse(index)
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
         return JSONResponse(status_code=404, content={"detail": "Интерфейс еще не собран. Запустите npm run dev либо npm run build"})
 
     if seed_demo:

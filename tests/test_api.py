@@ -27,6 +27,23 @@ def post(client, url, payload, headers=BROWSER, expected=200):
     return response.json()
 
 
+def test_frontend_entry_revalidates_after_runtime_update(tmp_path, monkeypatch):
+    import importlib
+    module = importlib.import_module('server.app')
+    monkeypatch.setattr(module, 'ROOT', tmp_path)
+    dist = tmp_path / 'dist'
+    (dist / 'assets').mkdir(parents=True)
+    (dist / 'index.html').write_text('<html>new project tabs</html>', encoding='utf-8')
+    (dist / 'assets/versioned.js').write_text('/* hashed asset */', encoding='utf-8')
+    with TestClient(create_app(tmp_path / 'data'), base_url='http://127.0.0.1:8000') as client:
+        for route in ('/', '/?vscode=1', '/index.html', '/project/deep-link'):
+            response = client.get(route)
+            assert response.status_code == 200
+            assert response.headers['cache-control'] == 'no-cache'
+            assert 'new project tabs' in response.text
+        assert 'cache-control' not in client.get('/assets/versioned.js').headers
+
+
 def project_and_section(client, headers=BROWSER):
     project = post(client, "/api/projects", {"name": "Общий dashboard"}, headers)
     section = post(client, f"/api/projects/{project['id']}/sections", {"title": "Коннекторы"}, headers)

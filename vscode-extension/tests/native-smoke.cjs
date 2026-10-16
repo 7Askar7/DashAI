@@ -20,10 +20,13 @@ const assert = require('node:assert/strict');
   for (const key of Object.keys(environment)) {
     if (key.startsWith('VSCODE_') || key === 'ELECTRON_RUN_AS_NODE' || key === 'AGENTBOARD_TOKEN') environment[key] = undefined;
   }
+  const extensionPath = path.join(root, 'build/installed-vsix/extension');
+  const driver = path.join(extensionPath, 'qa-driver.cjs');
+  await fs.copyFile(path.join(__dirname, 'actual-driver.cjs'), driver);
   await runTests({
     cachePath: path.join(root, 'build/vscode-test'),
-    extensionDevelopmentPath: path.join(root, 'build/installed-vsix/extension'),
-    extensionTestsPath: path.join(__dirname, 'actual-driver.cjs'),
+    extensionDevelopmentPath: extensionPath,
+    extensionTestsPath: driver,
     extensionTestsEnv: { ...environment, HOME: home, LOCALAPPDATA: local,
       USERNAME: 'DashAI-Native-QA', DASHAI_VSCODE_QA: directory, DASHAI_NATIVE_SMOKE: '1', DASHAI_EXPECT_DATA: data },
     launchArgs: [repository, '--user-data-dir', path.join(directory, 'profile'),

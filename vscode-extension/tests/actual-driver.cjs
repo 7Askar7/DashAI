@@ -31,10 +31,15 @@ exports.run = async function () {
   };
   let lastCommand = 0;
   try {
-    await progress('activating extension');
-    const api = await extension.activate();
-    await progress('opening board');
-    await vscode.commands.executeCommand('agentboard.open');
+    let api;
+    if (native) {
+      await progress('opening board through its user command');
+      await vscode.commands.executeCommand('agentboard.open');
+      api = extension.exports;
+    } else {
+      api = await extension.activate();
+      await vscode.commands.executeCommand('agentboard.open');
+    }
     await progress('discovering runtime');
     let runtime = await api.discover();
     assert(runtime && runtime.mode === 'vscode' && runtime.version === extension.packageJSON.version);
@@ -59,6 +64,7 @@ exports.run = async function () {
       assert(next && next.instance_id !== runtime.instance_id && next.data_dir === runtime.data_dir);
       await vscode.commands.executeCommand('agentboard.stop');
       await write('driver-complete.json', { status: 'passed', platform: process.platform, arch: process.arch, vscode: vscode.version });
+      await vscode.commands.executeCommand('workbench.action.quit');
       return;
     }
     const deadline = Date.now() + 8 * 60 * 1000;

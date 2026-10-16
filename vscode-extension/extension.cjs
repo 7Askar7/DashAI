@@ -109,10 +109,11 @@ async function stopRuntime(runtime) {
 function boardHtml(runtime) {
   const nonce = crypto.randomBytes(24).toString('hex');
   const origin = runtime.base_url;
+  const revision = encodeURIComponent(`${runtime.version}-${runtime.instance_id}`);
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${origin}; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'">
     <style nonce="${nonce}">html,body,iframe{height:100%;width:100%;margin:0;padding:0;border:0}body{overflow:hidden;background:#10161d}</style>
-    </head><body><iframe id="board" title="DashAI: проекты, задачи и история" src="${origin}/?vscode=1" allow="clipboard-read; clipboard-write"></iframe>
+    </head><body><iframe id="board" title="DashAI: проекты, задачи и история" src="${origin}/?vscode=1&amp;runtime=${revision}" allow="clipboard-read; clipboard-write"></iframe>
     <script nonce="${nonce}">
       const host = acquireVsCodeApi();
       const frame = document.getElementById('board');
