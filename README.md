@@ -6,7 +6,7 @@
 
 ## Открыть
 
-**macOS:** начиная со сборок 1.5.1 расширение получает отдельные нативные VSIX: `darwin-arm64` для Apple Silicon и `darwin-x64` для Intel. Пакет `win32-x64` на Mac не устанавливается. Сборка и проверка обеих архитектур выполняются в workflow **macOS VS Code packages**; доступность обновления в Marketplace требует загрузки этих пакетов издателем. Личные данные Mac: `~/Library/Application Support/Agentboard`. Отдельный установщик EXE предназначен для Windows. [Сборка и установка](docs/vscode.md).
+**macOS:** начиная со сборок 1.5.2 расширение получает отдельные нативные VSIX: `darwin-arm64` для Apple Silicon и `darwin-x64` для Intel. Пакет `win32-x64` на Mac не устанавливается. Сборка и проверка обеих архитектур выполняются в workflow **macOS VS Code packages**; доступность обновления в Marketplace требует загрузки этих пакетов издателем. Личные данные Mac: `~/Library/Application Support/Agentboard`. Отдельный установщик EXE предназначен для Windows. [Сборка и установка](docs/vscode.md).
 
 **В VS Code:** установите [DashAI из Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=7Askar7.dashai) (Extensions → поиск «DashAI») или файл `Agentboard-VSCode-<версия>-win32-x64.vsix` из [последнего выпуска](https://github.com/7Askar7/DashAI/releases/latest) через Extensions → «…» → **Install from VSIX…** — не обе копии сразу. Затем нажмите значок DashAI слева → **Открыть доску**. Dashboard откроется во вкладке редактора; Python, Node.js и отдельное приложение устанавливать не требуется. Данные остаются на вашем компьютере. [Установка, подключение агентов и обновления расширения](docs/vscode.md).
 

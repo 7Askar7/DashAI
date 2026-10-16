@@ -1,6 +1,10 @@
 # DashAI — контракт реализации
 
-## Нативное расширение macOS 1.5.1
+## Обновление интерфейса 1.5.2
+
+URL iframe включает проверенные `runtime.version` и `instance_id`: новая версия или экземпляр получает отдельный ключ HTTP-кэша. Общий HTTP frontend отдаёт HTML entry point и SPA fallback с `Cache-Control: no-cache`; hash-ресурсы JS/CSS не меняют политику. При активном MCP новый webview может открыть существующий совместимый runtime 1.5.0 без его остановки. Самопроизвольной перезагрузки страницы нет: несохранённый состав документа продолжает защищаться существующим UI.
+
+## Нативное расширение macOS 1.5.2
 
 Один Python runtime собирается PyInstaller на Windows x64, macOS arm64 и macOS x64. Общий упаковщик проверяет соответствие хоста target и внедряет точные `os`/`cpu` в каждый VSIX. macOS использует `~/Library/Application Support/Agentboard`, бинарники без `.exe`, исполняемые права и безопасную копию runtime в постоянную личную папку. Windows сохраняет существующие пути и named mutex. На macOS stdlib `fcntl.flock` обеспечивает эксклюзивный desktop lock и shared MCP lock на одну папку данных; shared acquisition ожидает краткую эксклюзивную проверку активности, чтобы сессия не стартовала без защиты. Коннектор по-прежнему обращается только к общему HTTP API. Mac-пакеты обновляются через Marketplace; PowerShell/Inno Setup updater остаётся Windows-only.
 
