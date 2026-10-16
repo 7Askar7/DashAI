@@ -41,10 +41,20 @@ jobs:
           npm --prefix vscode-extension test
           codesign --verify --deep --strict build/installed-vsix/extension/runtime/Agentboard/Agentboard
           codesign --verify --deep --strict build/installed-vsix/extension/runtime/Agentboard/AgentboardMCP
-      - name: Load packaged extension in native VS Code
-        run: node vscode-extension/tests/native-smoke.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: DashAI-${{ matrix.target }}
           path: artifacts/releases/DashAI-Marketplace-*-${{ matrix.target }}.vsix
           if-no-files-found: error
+      - name: Load packaged extension in native VS Code
+        timeout-minutes: 5
+        run: node vscode-extension/tests/native-smoke.cjs
+      - name: Preserve isolated QA diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DashAI-${{ matrix.target }}-QA
+          path: |
+            artifacts/qa/native-vscode-*/driver-*.json
+            artifacts/qa/native-vscode-*/profile/logs/**/*.log
+          if-no-files-found: ignore

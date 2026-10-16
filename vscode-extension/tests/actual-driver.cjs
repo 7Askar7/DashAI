@@ -11,36 +11,49 @@ exports.run = async function () {
   const directory = process.env.DASHAI_VSCODE_QA;
   assert(directory, 'Run through scripts/vscode_smoke.py with an isolated profile.');
   const write = (name, value) => fs.writeFile(path.join(directory, name), JSON.stringify(value));
+  const native = process.env.DASHAI_NATIVE_SMOKE === '1';
+  const progress = async stage => {
+    if (!native) return;
+    console.log('DashAI native QA:', stage);
+    await write('driver-progress.json', { stage });
+  };
+  await progress('driver started');
   // GitHub VSIX keeps the original ID; the Marketplace build is published as dashai.
   const extension = vscode.extensions.getExtension('7askar7.agentboard') || vscode.extensions.getExtension('7askar7.dashai');
   assert(extension, 'VSIX is installed in the isolated extension directory');
   // VS Code returns a separate API object per extension; stub the installed product's API.
   const productAPI = createRequire(path.join(extension.extensionPath, 'extension.cjs'))('vscode');
   const originalSaveDialog = productAPI.window.showSaveDialog;
-  const originalClipboard = await vscode.env.clipboard.readText();
+  const originalClipboard = native ? null : await vscode.env.clipboard.readText();
   productAPI.window.showSaveDialog = async options => {
     const name = path.basename(options.defaultUri.fsPath);
     return vscode.Uri.file(path.join(directory, name.startsWith('dashai-documentation.') ? name : 'project-export.json'));
   };
   let lastCommand = 0;
   try {
+    await progress('activating extension');
     const api = await extension.activate();
+    await progress('opening board');
     await vscode.commands.executeCommand('agentboard.open');
+    await progress('discovering runtime');
     let runtime = await api.discover();
     assert(runtime && runtime.mode === 'vscode' && runtime.version === extension.packageJSON.version);
+    await progress('configuring connectors');
     await vscode.commands.executeCommand('agentboard.connectAgents');
     assert(await fs.stat(path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, '.mcp.json')));
     await write('ready.json', { runtime, vscode: vscode.version, extensionPath: extension.extensionPath });
-    if (process.env.DASHAI_NATIVE_SMOKE === '1') {
+    if (native) {
       const repository = vscode.workspace.workspaceFolders[0].uri.fsPath;
       const config = JSON.parse(await fs.readFile(path.join(repository, '.mcp.json'), 'utf8')).mcpServers.agentboard;
       assert.equal(path.basename(config.command), process.platform === 'win32' ? 'AgentboardMCP.exe' : 'AgentboardMCP');
       assert(!config.command.startsWith(extension.extensionPath), 'Companion has a durable personal path');
       assert(config.args.includes(runtime.data_dir));
       assert.equal(runtime.data_dir, process.env.DASHAI_EXPECT_DATA);
+      await progress('stopping runtime');
       await vscode.commands.executeCommand('agentboard.stop');
       for (let i = 0; i < 80 && await api.discover(); i++) await pause(250);
       assert.equal(await api.discover(), null);
+      await progress('restarting runtime');
       await vscode.commands.executeCommand('agentboard.open');
       const next = await api.discover();
       assert(next && next.instance_id !== runtime.instance_id && next.data_dir === runtime.data_dir);
@@ -95,6 +108,6 @@ exports.run = async function () {
     throw error;
   } finally {
     productAPI.window.showSaveDialog = originalSaveDialog;
-    await vscode.env.clipboard.writeText(originalClipboard);
+    if (originalClipboard !== null) await vscode.env.clipboard.writeText(originalClipboard);
   }
 };

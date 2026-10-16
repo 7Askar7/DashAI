@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
     if (key.startsWith('VSCODE_') || key === 'ELECTRON_RUN_AS_NODE' || key === 'AGENTBOARD_TOKEN') environment[key] = undefined;
   }
   await runTests({
+    cachePath: path.join(root, 'build/vscode-test'),
     extensionDevelopmentPath: path.join(root, 'build/installed-vsix/extension'),
     extensionTestsPath: path.join(__dirname, 'actual-driver.cjs'),
     extensionTestsEnv: { ...environment, HOME: home, LOCALAPPDATA: local,
