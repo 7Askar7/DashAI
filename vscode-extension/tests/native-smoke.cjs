@@ -7,14 +7,19 @@ const assert = require('node:assert/strict');
 
 (async () => {
   const root = path.resolve(__dirname, '../..');
-  const directory = path.join(root, 'artifacts/qa/native-vscode');
+  const parent = path.join(root, 'artifacts/qa');
+  await fs.mkdir(parent, { recursive: true });
+  const directory = await fs.mkdtemp(path.join(parent, 'native-vscode-'));
   const home = path.join(directory, 'home');
   const repository = path.join(directory, 'repo with spaces');
   await fs.mkdir(home, { recursive: true });
   await fs.mkdir(repository, { recursive: true });
   const local = path.join(home, 'Local');
   const data = process.platform === 'darwin' ? path.join(home, 'Library/Application Support/Agentboard') : path.join(local, 'Agentboard');
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('VSCODE_') && key !== 'ELECTRON_RUN_AS_NODE' && key !== 'AGENTBOARD_TOKEN'));
+  const environment = { ...process.env };
+  for (const key of Object.keys(environment)) {
+    if (key.startsWith('VSCODE_') || key === 'ELECTRON_RUN_AS_NODE' || key === 'AGENTBOARD_TOKEN') environment[key] = undefined;
+  }
   await runTests({
     extensionDevelopmentPath: path.join(root, 'build/installed-vsix/extension'),
     extensionTestsPath: path.join(__dirname, 'actual-driver.cjs'),
