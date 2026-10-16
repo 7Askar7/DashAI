@@ -41,6 +41,8 @@ jobs:
           npm --prefix vscode-extension test
           codesign --verify --deep --strict build/installed-vsix/extension/runtime/Agentboard/Agentboard
           codesign --verify --deep --strict build/installed-vsix/extension/runtime/Agentboard/AgentboardMCP
+      - name: Load packaged extension in native VS Code
+        run: node vscode-extension/tests/native-smoke.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: DashAI-${{ matrix.target }}

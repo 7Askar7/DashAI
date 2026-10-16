@@ -31,6 +31,23 @@ exports.run = async function () {
     await vscode.commands.executeCommand('agentboard.connectAgents');
     assert(await fs.stat(path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, '.mcp.json')));
     await write('ready.json', { runtime, vscode: vscode.version, extensionPath: extension.extensionPath });
+    if (process.env.DASHAI_NATIVE_SMOKE === '1') {
+      const repository = vscode.workspace.workspaceFolders[0].uri.fsPath;
+      const config = JSON.parse(await fs.readFile(path.join(repository, '.mcp.json'), 'utf8')).mcpServers.agentboard;
+      assert.equal(path.basename(config.command), process.platform === 'win32' ? 'AgentboardMCP.exe' : 'AgentboardMCP');
+      assert(!config.command.startsWith(extension.extensionPath), 'Companion has a durable personal path');
+      assert(config.args.includes(runtime.data_dir));
+      assert.equal(runtime.data_dir, process.env.DASHAI_EXPECT_DATA);
+      await vscode.commands.executeCommand('agentboard.stop');
+      for (let i = 0; i < 80 && await api.discover(); i++) await pause(250);
+      assert.equal(await api.discover(), null);
+      await vscode.commands.executeCommand('agentboard.open');
+      const next = await api.discover();
+      assert(next && next.instance_id !== runtime.instance_id && next.data_dir === runtime.data_dir);
+      await vscode.commands.executeCommand('agentboard.stop');
+      await write('driver-complete.json', { status: 'passed', platform: process.platform, arch: process.arch, vscode: vscode.version });
+      return;
+    }
     const deadline = Date.now() + 8 * 60 * 1000;
     while (Date.now() < deadline) {
       await pause(100);
