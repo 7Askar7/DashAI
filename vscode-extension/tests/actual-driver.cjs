@@ -21,11 +21,11 @@ exports.run = async function () {
   // GitHub VSIX keeps the original ID; the Marketplace build is published as dashai.
   const extension = vscode.extensions.getExtension('7askar7.agentboard') || vscode.extensions.getExtension('7askar7.dashai');
   assert(extension, 'VSIX is installed in the isolated extension directory');
-  // VS Code returns a separate API object per extension; stub the installed product's API.
-  const productAPI = createRequire(path.join(extension.extensionPath, 'extension.cjs'))('vscode');
-  const originalSaveDialog = productAPI.window.showSaveDialog;
+  // Only the interactive export QA needs to replace the installed product's save dialog.
+  const productAPI = native ? null : createRequire(path.join(extension.extensionPath, 'extension.cjs'))('vscode');
+  const originalSaveDialog = productAPI?.window.showSaveDialog;
   const originalClipboard = native ? null : await vscode.env.clipboard.readText();
-  productAPI.window.showSaveDialog = async options => {
+  if (productAPI) productAPI.window.showSaveDialog = async options => {
     const name = path.basename(options.defaultUri.fsPath);
     return vscode.Uri.file(path.join(directory, name.startsWith('dashai-documentation.') ? name : 'project-export.json'));
   };
@@ -117,7 +117,7 @@ exports.run = async function () {
     throw error;
   } finally {
     clearInterval(activationTimer);
-    productAPI.window.showSaveDialog = originalSaveDialog;
+    if (productAPI) productAPI.window.showSaveDialog = originalSaveDialog;
     if (originalClipboard !== null) await vscode.env.clipboard.writeText(originalClipboard);
   }
 };
