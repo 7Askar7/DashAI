@@ -34,24 +34,18 @@ exports.run = async function () {
     write('driver-activation.json', { isActive: extension.isActive, hasExports: extension.isActive && !!extension.exports }).catch(console.error);
   }, 5000) : null;
   try {
-    let api;
-    if (native) {
-      assert(vscode.workspace.isTrusted, 'The isolated local QA workspace is trusted.');
-      assert(extension.packageJSON.activationEvents.includes('onStartupFinished'));
-      assert(extension.packageJSON.contributes.commands.some(command => command.command === 'agentboard.open'));
-      // The test entry can run before workbench startup finishes. Verify natural startup
-      // activation before sending a renderer command; never activate the product ourselves.
-      await progress('waiting for declared startup activation');
-      const startupDeadline = Date.now() + 30000;
-      while (!extension.isActive && Date.now() < startupDeadline) await pause(100);
-      assert(extension.isActive, 'Declared onStartupFinished activation did not complete within 30 seconds.');
-      await progress('opening board through its user command');
-      await vscode.commands.executeCommand('agentboard.open');
-      api = extension.exports;
-    } else {
-      api = await extension.activate();
-      await vscode.commands.executeCommand('agentboard.open');
-    }
+    assert(vscode.workspace.isTrusted, 'The isolated local QA workspace is trusted.');
+    assert(extension.packageJSON.activationEvents.includes('onStartupFinished'));
+    assert(extension.packageJSON.contributes.commands.some(command => command.command === 'agentboard.open'));
+    // The QA extension's activate() returns immediately so the workbench can finish
+    // activating every onStartupFinished extension, including the installed product.
+    await progress('waiting for declared startup activation');
+    const startupDeadline = Date.now() + 30000;
+    while (!extension.isActive && Date.now() < startupDeadline) await pause(100);
+    assert(extension.isActive, 'Declared onStartupFinished activation did not complete within 30 seconds.');
+    await progress('opening board through its user command');
+    await vscode.commands.executeCommand('agentboard.open');
+    const api = extension.exports;
     await progress('discovering runtime');
     let runtime = await api.discover();
     assert(runtime && runtime.mode === 'vscode' && runtime.version === extension.packageJSON.version);
@@ -130,3 +124,5 @@ exports.run = async function () {
     if (originalClipboard !== null) await vscode.env.clipboard.writeText(originalClipboard);
   }
 };
+
+exports.activate = () => { void exports.run().catch(console.error); };

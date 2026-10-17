@@ -47,11 +47,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const driver = path.join(directory, 'driver');
   await fs.mkdir(driver);
   await fs.writeFile(path.join(driver, 'package.json'), JSON.stringify({ name: 'dashai-qa', publisher: 'local-qa',
-    version: '0.0.1', engines: { vscode: '^1.95.0' }, main: './index.cjs' }));
+    version: '0.0.1', engines: { vscode: '^1.95.0' }, activationEvents: ['onStartupFinished'], main: './index.cjs' }));
   await fs.copyFile(path.join(__dirname, 'actual-driver.cjs'), path.join(driver, 'index.cjs'));
   const log = await fs.open(path.join(directory, 'vscode.log'), 'w');
   const child = spawn(vscodeExecutablePath, [repository, '--user-data-dir', profile, '--extensions-dir', extensions,
-    '--extensionDevelopmentPath=' + driver, '--extensionTestsPath=' + path.join(driver, 'index.cjs'),
+    '--extensionDevelopmentPath=' + driver,
     '--no-sandbox', '--disable-gpu-sandbox', '--no-cached-data', '--disable-workspace-trust',
     '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-telemetry'],
   { env: environment, stdio: ['ignore', log.fd, log.fd] });

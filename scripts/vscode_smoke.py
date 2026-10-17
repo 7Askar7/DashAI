@@ -249,7 +249,7 @@ def main():
     driver = directory / "driver"
     driver.mkdir()
     (driver / "package.json").write_text(json.dumps({"name": "dashai-qa", "publisher": "local-qa", "version": "0.0.1",
-        "engines": {"vscode": "^1.95.0"}, "main": "./index.cjs"}), encoding="utf-8")
+        "engines": {"vscode": "^1.95.0"}, "activationEvents": ["onStartupFinished"], "main": "./index.cjs"}), encoding="utf-8")
     (driver / "index.cjs").write_text((ROOT / "vscode-extension" / "tests" / "actual-driver.cjs").read_text(encoding="utf-8"), encoding="utf-8")
     environment = dict(os.environ, LOCALAPPDATA=str(directory / "local"), USERNAME="DashAI-QA-" + uuid4().hex,
         DASHAI_VSCODE_QA=str(directory))
@@ -273,7 +273,7 @@ def main():
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     arguments = [str(args.code), str(repository), "--user-data-dir", str(profile), "--extensions-dir", str(extensions),
-        "--extensionDevelopmentPath=" + str(driver), "--extensionTestsPath=" + str(driver / "index.cjs"),
+        "--extensionDevelopmentPath=" + str(driver),
         "--remote-debugging-port=" + str(port), "--disable-updates", "--skip-welcome", "--skip-release-notes",
         "--disable-workspace-trust", "--no-cached-data"]
     with (directory / "vscode.log").open("w", encoding="utf-8") as output:
