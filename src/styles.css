@@ -18,8 +18,9 @@
   --red: #fba7a7;
   color-scheme: dark;
 }
-.project-tabs { flex-wrap: wrap; gap: 10px; }
-.project-tabs .tabs-nav { flex-wrap: wrap; min-width: 0; }
+.project-tabs { flex-wrap: nowrap; gap: 10px; }
+.project-tabs .tabs-nav { flex: 1; flex-wrap: nowrap; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.project-tabs .tabs-nav > button { flex-shrink: 0; white-space: nowrap; }
 * {
   box-sizing: border-box;
 }
@@ -1685,7 +1686,8 @@ button:focus:not(:focus-visible) {
 }
 .field input,
 .field textarea,
-.field select {
+.field select,
+:where(.project-modules, .integration-form, .connector-config-controls) :is(input:not([type=checkbox]), textarea, select) {
   background: #0d1520;
   border: 1px solid #425772;
   border-radius: 6px;
@@ -1702,7 +1704,8 @@ button:focus:not(:focus-visible) {
 }
 .field input:hover,
 .field textarea:hover,
-.field select:hover {
+.field select:hover,
+:where(.project-modules, .integration-form, .connector-config-controls) :is(input:not([type=checkbox]), textarea, select):hover {
   border-color: #748dac;
 }
 .field small {
@@ -2352,6 +2355,10 @@ button:focus:not(:focus-visible) {
   }
   .project-tabs {
     margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .project-tabs .tabs-nav {
+    flex-basis: 100%;
   }
   .project-agents .text-button {
   min-height: 32px;
@@ -2564,6 +2571,9 @@ button:focus:not(:focus-visible) {
   .field select {
     font-size: 13px;
     min-height: 42px;
+  }
+  :where(.project-modules, .integration-form, .connector-config-controls) :is(input:not([type=checkbox]), textarea, select) {
+    font-size: 16px;
   }
   .field label {
     font-size: 12px;

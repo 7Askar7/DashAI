@@ -29,7 +29,7 @@ exports.run = async function () {
     const name = path.basename(options.defaultUri.fsPath);
     return vscode.Uri.file(path.join(directory, name.startsWith('dashai-documentation.') ? name : 'project-export.json'));
   };
-  let lastCommand = 0;
+  let lastCommand = 0, finished = false;
   const activationTimer = native ? setInterval(() => {
     write('driver-activation.json', { isActive: extension.isActive, hasExports: extension.isActive && !!extension.exports }).catch(console.error);
   }, 5000) : null;
@@ -106,6 +106,7 @@ exports.run = async function () {
           await vscode.commands.executeCommand('agentboard.stop');
           await write('driver-complete.json', { status: 'passed', vscode: vscode.version });
           await write('reply.json', { id: command.id, status: 'passed' });
+          finished = true;
           return;
         } else throw new Error('Unknown QA action');
         await write('reply.json', { id: command.id, status: 'passed' });
@@ -122,6 +123,7 @@ exports.run = async function () {
     clearInterval(activationTimer);
     if (productAPI) productAPI.window.showSaveDialog = originalSaveDialog;
     if (originalClipboard !== null) await vscode.env.clipboard.writeText(originalClipboard);
+    if (finished) await vscode.commands.executeCommand('workbench.action.quit');
   }
 };
 
