@@ -53,7 +53,9 @@ INSTRUCTIONS = (
     "For project documentation read get_project_map; publish_project_map submits a complete safe file manifest "
     "with SHA256 and structured descriptions plus Mermaid diagrams. Exclude credentials, private data, dependencies "
     "and build outputs. Read source files in your own workspace; the connector never reads the repository. "
-    "Descriptions are drafts; source_revision is the analyzed snapshot, not evidence of current filesystem state."
+    "Descriptions are drafts; source_revision is the analyzed snapshot, not evidence of current filesystem state. "
+    "Optional project modules are Markdown templates, not executable plugins. Read their current version before changing "
+    "content/enabled state; disabling preserves content. Page module summaries or request a specific module's full content."
 )
 
 
@@ -173,7 +175,10 @@ def load_token(agent: str, credentials: Path, token_file: Path | None = None) ->
         if content.startswith("{"):
             issued = json.loads(content)
             token = issued.get("token")
-            actor_id = issued.get("agent", {}).get("id", agent)
+            identity = issued.get("agent", {})
+            if not isinstance(identity, dict):
+                raise ValueError("Invalid issued agent identity")
+            actor_id = identity.get("id", agent)
         else:
             token, actor_id = content, agent
     elif os.environ.get("AGENTBOARD_TOKEN"):
@@ -188,6 +193,8 @@ def load_token(agent: str, credentials: Path, token_file: Path | None = None) ->
         token, actor_id = entry.get("token"), entry.get("id", agent)
     if not isinstance(token, str) or not token or len(token) > 4096 or "\r" in token or "\n" in token:
         raise ValueError("Agentboard token is missing or invalid")
+    if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 100 or any(c in actor_id for c in "\r\n\0"):
+        raise ValueError("Agentboard identity is missing or invalid")
     return token, actor_id
 
 
@@ -517,9 +524,51 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
                           diagrams=[{k: d.get(k) for k in ('id', 'title', 'notation', 'status')} for d in data['diagrams']])
         return result
 
+    @server.tool(annotations=READ)
+    def list_modules(module_id: Identifier | None = None, limit: Limit = 20,
+                     offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
+        """Page available module template summaries, or request one full template by ID. Modules never execute code."""
+        modules = api("GET", "/api/modules")["modules"]
+        if module_id is not None:
+            return {"module": next((item for item in modules if item["id"] == module_id), None)}
+        return {"modules": [{key: clipped(value, 500) for key, value in item.items() if key != "template"}
+                            for item in modules[offset:offset + limit]], "total": len(modules),
+                "next_offset": offset + limit if offset + limit < len(modules) else None}
+
+    @server.tool(annotations=READ)
+    def get_project_modules(project_id: Identifier, module_id: Identifier | None = None, limit: Limit = 20,
+                            offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
+        """Page project module summaries and versions, or request one full document by ID. Disabling preserves content."""
+        modules = api("GET", entity_path("projects", project_id) + "/modules")["modules"]
+        if module_id is not None:
+            selected = next((item for item in modules if item["id"] == module_id), None)
+            return {"module": None if selected is None else {key: value for key, value in selected.items() if key != "template"}}
+        return {"modules": [{key: clipped(value, 500) for key, value in item.items() if key not in {"template", "content"}}
+                            for item in modules[offset:offset + limit]], "total": len(modules),
+                "next_offset": offset + limit if offset + limit < len(modules) else None}
+
+    @server.tool(annotations=WRITE)
+    def configure_project_module(project_id: Identifier, module_id: Identifier,
+                                 expected_version: Annotated[int, Field(ge=0)], enabled: bool,
+                                 reason: Reason, idempotency_key: Key,
+                                 content: Annotated[str, Field(max_length=200000)] | None = None) -> dict[str, Any]:
+        """Enable/disable a project module or edit Markdown content with a fresh version. Omit content to preserve it."""
+        body = {"expected_version": expected_version, "enabled": enabled, "reason": reason, "idempotency_key": idempotency_key}
+        if content is not None:
+            body["content"] = content
+        return clipped(api("PUT", entity_path("projects", project_id) + "/modules/" + quote(module_id, safe=""), body))
+
+    @server.tool(annotations=WRITE)
+    def create_module_template(name: Identifier, reason: Reason, idempotency_key: Key,
+                                description: Annotated[str, Field(max_length=3000)] = "",
+                                template: Annotated[str, Field(max_length=100000)] = "") -> dict[str, Any]:
+        """Create a reusable Markdown module template for projects; never installs packages or executes user code."""
+        return clipped(api("POST", "/api/modules", {"name": name, "description": description,
+                       "template": template, "reason": reason, "idempotency_key": idempotency_key}))
+
     @server.tool(annotations=WRITE)
     def publish_project_map(project_id: Identifier, expected_version: Annotated[int, Field(ge=0)],
-                            source_revision: Title, files: Annotated[list[MapFile], Field(max_length=2000)],
+                            source_revision: Title, files: Annotated[list[MapFile], Field(max_length=10000)],
                             reason: Reason, idempotency_key: Key,
                             diagrams: Annotated[list[MapDiagram], Field(max_length=100)] | None = None) -> dict[str, Any]:
         """Publish complete manifest through the shared HTTP API. Omitted descriptions are preserved and marked stale after hash changes. diagrams=null preserves existing diagrams; [] explicitly clears them. New prose is draft, not verified."""
@@ -534,7 +583,7 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", choices=["codex", "claude"], required=True)
+    parser.add_argument("--agent", required=True, help="Credential alias or issued agent ID; independent from model/client name")
     parser.add_argument("--credentials", type=Path)
     parser.add_argument("--data-dir", type=Path, help="Read current loopback URL from this desktop data directory")
     parser.add_argument("--token-file", type=Path)
@@ -543,6 +592,8 @@ def main(argv: list[str] | None = None) -> None:
     original = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(original)
     try:
+        if not args.agent.strip() or len(args.agent) > 100 or any(c in args.agent for c in "\r\n\0"):
+            raise ValueError("Invalid agent ID: use 1–100 characters without line breaks")
         if not args.session_id or len(args.session_id) > 200 or "\n" in args.session_id or "\r" in args.session_id:
             raise ValueError("Invalid session ID: use 1–200 characters without line breaks")
         target = forwarding_target(args.data_dir, args.url)

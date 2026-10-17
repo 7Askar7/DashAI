@@ -5,6 +5,7 @@ dist/
 __pycache__/
 .pytest_cache/
 *.pyc
+*.tsbuildinfo
 data/
 vendor/
 .mcp.json

@@ -19,6 +19,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from .project_map import SCHEMA as MAP_SCHEMA, install_routes as install_map_routes
+from .modules import SCHEMA as MODULE_SCHEMA, install_routes as install_module_routes, project_modules
+from .integrations import SCHEMA as INTEGRATION_SCHEMA, install_routes as install_integration_routes, enqueue as enqueue_integrations
 
 ROOT = Path(__file__).resolve().parents[1]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
@@ -149,7 +151,13 @@ class ChangeCreate(Write):
 
 class AgentCreate(Write):
     name: Text
-    kind: Literal["codex", "claude"]
+    kind: Literal["codex", "claude", "custom"] = "custom"
+
+
+class ConnectorConfig(StrictModel):
+    client: Literal["codex", "claude", "cursor", "vscode", "cline", "generic"]
+    agent_id: Text
+    token_file: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2048)] | None = None
 
 
 SCHEMA = """
@@ -180,7 +188,7 @@ class Store:
         self.credentials_file = self.data_dir / "connector-secrets.json"
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
-            db.executescript(SCHEMA + MAP_SCHEMA)
+            db.executescript(SCHEMA + MAP_SCHEMA + MODULE_SCHEMA + INTEGRATION_SCHEMA)
         issued = {}
         with self.transaction() as db:
             for agent_id, name, kind in [("human", "Вы", "human"), ("codex", "Codex", "codex"), ("claude", "Claude Code", "claude")]:
@@ -258,8 +266,14 @@ class Store:
         return event
 
     @classmethod
-    def events(cls, db, where="", args=(), tail: int | None = None):
-        query = f"SELECT * FROM events {where} ORDER BY id DESC"
+    def events(cls, db, where="", args=(), tail: int | None = None, *, summary=False):
+        columns = "*"
+        if summary:
+            # Polling avoids decoding document bodies; history/export keep the complete audit.
+            columns = "id,project_id,task_id,entity_type,entity_id,action,actor_id,actor_name,actor_kind,reason,created_at,session_id," + ",".join(
+                f"CASE WHEN entity_type='project_module' THEN json_remove({field},'$.content') ELSE {field} END AS {field}"
+                for field in ("before_json", "after_json"))
+        query = f"SELECT {columns} FROM events {where} ORDER BY id DESC"
         if tail:
             query += " LIMIT ?"
             args = (*args, tail)
@@ -268,6 +282,8 @@ class Store:
     @staticmethod
     def record(db, actor, reason, entity_type, entity_id, action, before, after, project_id=None, task_id=None, session_id=None):
         db.execute("INSERT INTO events(project_id,task_id,entity_type,entity_id,action,actor_id,actor_name,actor_kind,reason,before_json,after_json,created_at,session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (project_id, task_id, entity_type, entity_id, action, actor["id"], actor["name"], actor["kind"], reason, encode(before) if before is not None else None, encode(after) if after is not None else None, now(), session_id))
+        if project_id and (action == "project.updated" or entity_type in {"project_map", "project_module"}):
+            enqueue_integrations(db, project_id)
 
     def write(self, actor, scope, model, operation):
         payload = model.model_dump(exclude={"idempotency_key"})
@@ -458,7 +474,7 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
     def bootstrap():
         with store.connect() as db:
             db.execute("BEGIN")
-            return {"projects": store.entities(db, "projects"), "agents": store.agents(db), "activity": store.events(db, tail=50)}
+            return {"projects": store.entities(db, "projects"), "agents": store.agents(db), "activity": store.events(db, tail=50, summary=True)}
 
     @app.get("/api/projects/{project_id}", dependencies=[Depends(authenticated_read)])
     def board(project_id: str):
@@ -466,7 +482,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             db.execute("BEGIN")
             project = store.entity(db, "projects", project_id)
             sections = store.entities(db, "sections", "WHERE project_id=?", (project_id,))
-            return {"project": project, "sections": [item for item in sections if item.get("kind") != "subproject"], "subprojects": [item for item in sections if item.get("kind") == "subproject"], "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "activity": store.events(db, "WHERE project_id=?", (project_id,), tail=100)}
+            modules = [{key: item[key] for key in ("id", "name", "kind", "enabled", "version")} for item in project_modules(db, project_id, summary=True)]
+            return {"project": project, "sections": [item for item in sections if item.get("kind") != "subproject"], "subprojects": [item for item in sections if item.get("kind") == "subproject"], "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "activity": store.events(db, "WHERE project_id=?", (project_id,), tail=100, summary=True), "modules": modules}
 
     @app.post("/api/projects")
     def create_project(body: ProjectCreate, request: Request, who=Depends(actor)):
@@ -644,15 +661,39 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             result["sections"] = [item for item in result["sections"] if item.get("kind") != "subproject"]
             result['project_map'] = next(iter(store.entities(db, 'project_maps', 'WHERE id=?', (project_id,))), None)
             result['project_map_revisions'] = [json.loads(row['payload']) for row in db.execute('SELECT payload FROM project_map_revisions WHERE project_id=? ORDER BY version', (project_id,))]
+            result['modules'] = project_modules(db, project_id)
             return JSONResponse(result, headers={"Content-Disposition": f'attachment; filename="agentboard-{project_id}.json"'})
 
     @app.get("/api/connectors", dependencies=[Depends(authenticated_read)])
     def connectors():
+        from connectors.presets import client_profiles
         with store.connect() as db:
             installed = bool(getattr(sys, "frozen", False))
             from desktop.runtime import binary_name
             command = Path(sys.executable).with_name(binary_name("AgentboardMCP")) if installed else Path(sys.executable)
-            return {"base_url": base_url, "python_command": str(command.resolve()), "mcp_script": "--mcp" if installed else str((ROOT / "connectors" / "mcp_server.py").resolve()), "data_dir": str(store.data_dir), "desktop": installed, "credentials_file": str(store.credentials_file), "agents": store.agents(db)}
+            return {"base_url": base_url, "python_command": str(command.resolve()), "mcp_script": "--mcp" if installed else str((ROOT / "connectors" / "mcp_server.py").resolve()), "data_dir": str(store.data_dir), "desktop": installed, "credentials_file": str(store.credentials_file), "agents": store.agents(db), "client_profiles": client_profiles()}
+
+    @app.post("/api/connectors/config")
+    def connector_config(body: ConnectorConfig, who=Depends(actor)):
+        if who["kind"] != "human":
+            raise HTTPException(403, "Конфигурацию подключения создает человек")
+        with store.connect() as db:
+            if not db.execute("SELECT 1 FROM agents WHERE id=? AND kind!='human'", (body.agent_id,)).fetchone():
+                raise HTTPException(404, "Агент не найден")
+        if body.token_file is not None and (not Path(body.token_file).is_absolute() or any(c in body.token_file for c in "\r\n\0")):
+            raise HTTPException(422, "Укажите абсолютный путь к файлу токена")
+        if body.agent_id not in {"codex", "claude"} and body.token_file is None:
+            raise HTTPException(422, "Для отдельной идентичности нужен файл выданного токена")
+        from connectors.presets import render_config
+        from desktop.runtime import binary_name
+        installed = bool(getattr(sys, "frozen", False))
+        command = Path(sys.executable).with_name(binary_name("AgentboardMCP")) if installed else Path(sys.executable)
+        args = ["--mcp" if installed else str((ROOT / "connectors" / "mcp_server.py").resolve()),
+                "--agent", body.agent_id, "--credentials", str(store.credentials_file),
+                *(["--data-dir", str(store.data_dir)] if installed else ["--url", base_url])]
+        if body.token_file is not None:
+            args += ["--token-file", body.token_file]
+        return render_config(body.client, {"command": str(command.resolve()), "args": args})
 
     @app.post("/api/agents")
     def create_agent(body: AgentCreate, request: Request, who=Depends(actor)):
@@ -668,6 +709,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             return {"agent": agent, "token": token}
 
     install_map_routes(app, store, actor, authenticated_read, session)
+    install_module_routes(app, store, actor, authenticated_read, session)
+    install_integration_routes(app, store, actor, authenticated_read, session)
     dist = ROOT / "dist"
 
     @app.get("/{path:path}", include_in_schema=False)

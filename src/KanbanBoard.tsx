@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowRightLeft, GripVertical, Link2 } from "lucide-react";
 import {
-  priorities,
   statuses,
   taskTypes,
   subprojectPath,
@@ -11,6 +10,7 @@ import {
   type Task,
 } from "./api";
 import "./kanban.css";
+import PriorityMark from './PriorityMark';
 
 type Props = {
   tasks: Task[];
@@ -168,11 +168,7 @@ export default function KanbanBoard({
                             <span className="kanban-task-id">
                               {task.short_id}
                             </span>
-                            <span
-                              className={`kanban-priority ${task.priority}`}
-                            >
-                              {priorities[task.priority]}
-                            </span>
+                            <PriorityMark priority={task.priority} label/>
                             <GripVertical
                               className="kanban-drag-handle"
                               size={15}

@@ -364,7 +364,7 @@ def test_mcp_workflow_and_project_setup(tmp_path, monkeypatch):
             assert replaced["mcp_servers"] == {"agentboard": {"command": "new"}, "keep": {"command": "kept"}}
             rejected = subprocess.run([sys.executable, str(ROOT / "connectors" / "mcp_server.py"), "--agent", "codex",
                                        "--credentials", str(credentials), "--session-id", "x" * 201],
-                                      capture_output=True, text=True, timeout=10)
+                                      capture_output=True, text=True, timeout=30)
             assert rejected.returncode == 1 and "Invalid session ID" in rejected.stderr and not rejected.stdout
             invalid_project = tmp_path / "invalid config"
             (invalid_project / ".codex").mkdir(parents=True)
@@ -547,6 +547,53 @@ def test_mcp_workflow_and_project_setup(tmp_path, monkeypatch):
                         assert recent["events"][0]["id"] == max(event["id"] for event in direct["events"])
 
             asyncio.run(workflow())
+            # A third-party client and user-named model use the same authenticated API/audit.
+            cursor_paths = setup(tmp_path / "third party", credentials, url, agent_name="Qwen Architecture Reviewer",
+                                 agent_kind="custom", client="cursor")
+            cursor = json.loads(cursor_paths[0].read_text(encoding="utf-8"))["mcpServers"]["agentboard"]
+            cursor_args = cursor["args"]
+            issued = json.loads(Path(cursor_args[cursor_args.index("--token-file") + 1]).read_text(encoding="utf-8"))
+            assert issued["agent"]["kind"] == "custom" and issued["agent"]["last_seen"] is None
+            assert issued["token"] not in json.dumps(cursor)
+
+            async def third_party_workflow():
+                parameters = StdioServerParameters(command=cursor["command"], args=cursor_args, env={**os.environ, **proxy_env})
+                async with stdio_client(parameters) as (reader, writer), ClientSession(reader, writer) as client:
+                    await client.initialize()
+                    async def call(name, args):
+                        response = await client.call_tool(name, args)
+                        assert not response.isError, response.content
+                        return response.structuredContent
+                    project = await call("create_project", {"name": "Third-party model", "reason": "Verify custom attribution", "idempotency_key": "custom-project"})
+                    catalog = await call("list_modules", {"limit": 1})
+                    assert len(catalog["modules"]) == 1 and catalog["next_offset"] == 1
+                    template_args = {"name": "Threat model", "description": "Project-specific security notes", "template": "# Security\n",
+                                     "reason": "Reusable documentation", "idempotency_key": "custom-template"}
+                    template = await call("create_module_template", template_args)
+                    assert (await call("create_module_template", template_args))["id"] == template["id"]
+                    configured = await call("configure_project_module", {"project_id": project["id"], "module_id": template["id"],
+                                            "expected_version": 0, "enabled": True, "content": "# Reviewed risks\n",
+                                            "reason": "Document this project", "idempotency_key": "custom-module-enable"})
+                    disabled = await call("configure_project_module", {"project_id": project["id"], "module_id": template["id"],
+                                          "expected_version": configured["version"], "enabled": False,
+                                          "reason": "Hide without losing notes", "idempotency_key": "custom-module-disable"})
+                    document = await call("get_project_modules", {"project_id": project["id"], "module_id": template["id"]})
+                    assert document["module"]["content"] == "# Reviewed risks\n" and not document["module"]["enabled"]
+                    cleared = await call("configure_project_module", {"project_id": project["id"], "module_id": template["id"],
+                                         "expected_version": disabled["version"], "enabled": True, "content": "",
+                                         "reason": "Clear the selected document", "idempotency_key": "custom-module-clear"})
+                    assert cleared["content"] == ""
+                    task = await call("create_task", {"project_id": project["id"], "title": "Custom agent work", "rationale": "Provider independent identity",
+                                       "task_type": "documentation", "reason": "Verify custom MCP writes", "idempotency_key": "custom-task"})
+                    claimed = await call("claim_task", {"task_id": task["id"], "expected_version": task["version"],
+                                         "reason": "Own this work", "idempotency_key": "custom-claim"})
+                    assert claimed["claim_owner_id"] == issued["agent"]["id"]
+                    history = await call("get_history", {"project_id": project["id"]})
+                    assert history["events"] and all(event["actor_kind"] == "custom" and event["actor_name"] == "Qwen Architecture Reviewer"
+                                                     and event["actor_id"] == issued["agent"]["id"] for event in history["events"])
+                    status = await call("connector_status", {})
+                    assert status["configured_identity"] == issued["agent"]["id"]
+            asyncio.run(third_party_workflow())
         finally:
             process.terminate()
             try:

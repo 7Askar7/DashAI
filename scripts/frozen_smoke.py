@@ -53,6 +53,18 @@ async def protocol_session(parameters, errlog) -> None:
             project = await call("create_project", {"name": "Frozen smoke", "reason": "Verify bundled MCP",
                                                        "idempotency_key": "frozen-project"})
             assert (await call('get_project_map', {'project_id': project['id']}))['version'] == 0
+            modules = (await call('get_project_modules', {'project_id': project['id']}))['modules']
+            assert any(item['id'] == 'map' and item['enabled'] for item in modules)
+            assert any(item['id'] == 'integrations' and not item['enabled'] for item in modules)
+            document = await call('configure_project_module', {'project_id': project['id'], 'module_id': 'decisions',
+                'expected_version': 0, 'enabled': True, 'content': 'Frozen ADR', 'reason': 'Verify modular knowledge', 'idempotency_key': 'frozen-module'})
+            assert document['version'] == 1
+            await call('configure_project_module', {'project_id': project['id'], 'module_id': 'decisions',
+                'expected_version': 1, 'enabled': False, 'reason': 'Verify non-destructive disable', 'idempotency_key': 'frozen-module-off'})
+            document = (await call('get_project_modules', {'project_id': project['id'], 'module_id': 'decisions'}))['module']
+            assert document['content'] == 'Frozen ADR' and not document['enabled']
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/integrations", timeout=5) as response:
+                assert json.load(response)['integrations'] == []
             publication = await call('publish_project_map', {'project_id': project['id'], 'expected_version': 0,
                 'source_revision': 'frozen-check', 'files': [{'path': 'src/App.tsx', 'sha256': '1'*64,
                 'description': {'title': 'UI', 'summary': 'Shared project UI', 'purpose': 'Human workspace'}}],

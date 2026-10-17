@@ -60,10 +60,13 @@ import {
   type Status,
 } from "./api";
 import KanbanBoard from "./KanbanBoard";
+import PriorityMark from './PriorityMark';
+import ProjectModules from './ProjectModules';
+import ProjectIntegrations from './ProjectIntegrations';
 import { insideVSCode, hostRequest, writeClipboard } from "./host";
 const ProjectMap = lazy(() => import('./ProjectMap'));
 
-type View = "overview" | "board" | "project_history" | "history" | "connectors" | "map" | "architecture" | "documentation";
+type View = "overview" | "board" | "project_history" | "history" | "connectors" | "map" | "architecture" | "documentation" | "modules" | "integrations";
 type Modal =
   | { kind: "project"; project?: Project }
   | { kind: "subproject"; subproject?: Subproject; parent_id?: string }
@@ -74,7 +77,7 @@ const text = (data: FormData, key: string) =>
 const agentName = (agents: Agent[], id: string | null) =>
   agents.find((a) => a.id === id)?.name || "Не назначен";
 const kindLabel = (kind: string) =>
-  kind === "human" ? "Человек" : kind === "claude" ? "Claude Code" : "Codex";
+  kind === "human" ? "Человек" : kind === "claude" ? "Claude Code" : kind === "codex" ? "Codex" : "Другой агент";
 const fieldLabels:Record<string,string> = {title:'Название',description:'Описание',rationale:'Зачем',acceptance_criteria:'Критерии готовности',status:'Статус',priority:'Приоритет',task_type:'Тип задачи',subproject_id:'Подпроект',parent_id:'Родительский подпроект',assignee_id:'Исполнитель',section_id:'Раздел',depends_on:'Зависимости',claim_owner_id:'Владелец'};
 
 function Avatar({ agent, small = false }: { agent?: Agent; small?: boolean }) {
@@ -89,6 +92,8 @@ function Avatar({ agent, small = false }: { agent?: Agent; small?: boolean }) {
         <Sparkles size={small ? 12 : 15} />
       ) : agent?.kind === "human" ? (
         "В"
+      ) : agent?.kind === 'custom' ? (
+        agent.name.slice(0,1).toLocaleUpperCase()
       ) : (
         "—"
       )}
@@ -846,10 +851,7 @@ function TaskDrawer({
         <div className="task-properties">
           <StatusPill status={task.status} />
           <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
-          <span className={`priority ${task.priority}`}>
-            <span className="priority-bars">▂▄▆</span>
-            {priorities[task.priority]}
-          </span>
+          <PriorityMark priority={task.priority} label/>
           <span className="assigned">
             <Avatar agent={assignee} small />
             {agentName(agents, task.assignee_id)}
@@ -1156,11 +1158,21 @@ function ConnectorView({
     } | null>(null),
     [busy, setBusy] = useState(false),
     [copied, setCopied] = useState("");
+  const [client,setClient]=useState('codex'),[identity,setIdentity]=useState('codex'),[tokenFile,setTokenFile]=useState('');
+  const [issuedAgents,setIssuedAgents]=useState<Agent[]>([]);
+  const [generated,setGenerated]=useState<{filename:string;format:string;content:string}|null>(null),[configError,setConfigError]=useState(''),[configBusy,setConfigBusy]=useState(false);
   useEffect(() => {
     api<Connectors>("/connectors")
       .then(setInfo)
       .catch((e) => setError(e.message));
   }, []);
+  useEffect(()=>{
+    if(!info)return;
+    if(!['codex','claude'].includes(identity)&&!tokenFile.trim()){setGenerated(null);setConfigError('Укажите путь к локальному JSON-файлу с выданным токеном.');setConfigBusy(false);return;}
+    let cancelled=false;setConfigBusy(true);setConfigError('');
+    const timer=setTimeout(()=>{api<{filename:string;format:string;content:string}>('/connectors/config',{method:'POST',body:JSON.stringify({client,agent_id:identity,...(tokenFile.trim()?{token_file:tokenFile.trim()}:{})})}).then(value=>{if(!cancelled)setGenerated(value);}).catch(error=>{if(!cancelled){setConfigError(error.message);setGenerated(null);}}).finally(()=>{if(!cancelled)setConfigBusy(false);});},250);
+    return()=>{cancelled=true;clearTimeout(timer);};
+  },[info,client,identity,tokenFile]);
   async function copy(value: string, id: string) {
     try {
       await writeClipboard(value);
@@ -1178,16 +1190,15 @@ function ConnectorView({
     setError("");
     const d = new FormData(e.currentTarget);
     try {
-      setCredential(
-        await api("/agents", {
+      const created = await api<{agent:Agent;token:string}>("/agents", {
           method: "POST",
           body: JSON.stringify({
             name: text(d, "name"),
             kind: text(d, "kind"),
             reason: text(d, "reason"),
           }),
-        }),
-      );
+        });
+      setCredential(created);setIssuedAgents(previous=>[...previous,created.agent]);setIdentity(created.agent.id);setTokenFile('');
       setNewAgent(false);
       notify("Агент создан. Сохраните его токен.");
     } catch (e) {
@@ -1196,50 +1207,19 @@ function ConnectorView({
       setBusy(false);
     }
   }
-  const entries =
-    info &&
-    (["codex", "claude"] as const).map((kind) => {
-      const args = [
-        info.mcp_script,
-        "--agent",
-        kind,
-        "--credentials",
-        info.credentials_file,
-        info.desktop ? "--data-dir" : "--url",
-        info.desktop ? info.data_dir : info.base_url,
-      ];
-      const config =
-        kind === "codex"
-          ? `[mcp_servers.agentboard]\ncommand = ${JSON.stringify(info.python_command)}\nargs = ${JSON.stringify(args)}\nstartup_timeout_sec = 20\ntool_timeout_sec = 60`
-          : JSON.stringify(
-              {
-                mcpServers: {
-                  agentboard: {
-                    type: "stdio",
-                    command: info.python_command,
-                    args,
-                  },
-                },
-              },
-              null,
-              2,
-            );
-      return { kind, config };
-    });
+  const knownAgents=agents.filter(agent=>agent.kind!=='human');
+  knownAgents.push(...issuedAgents.filter(agent=>!knownAgents.some(existing=>existing.id===agent.id)));
+  const currentAgent=knownAgents.find(agent=>agent.id===identity);
   return (
     <div className="connectors-page">
-      <div className="page-kicker">
-        <Plug size={15} />
-        ОБЩИЙ КОНТЕКСТ
-      </div>
       <div className="page-heading">
         <div>
           <h1>
             Подключите ваших агентов<span className="heading-dot">.</span>
           </h1>
           <p>
-            Codex и Claude Code работают на одной доске. Каждое действие
-            оставляет след.
+            Любые агенты с поддержкой MCP работают на общей доске. Имя модели и
+            формат конфигурации клиента выбираются отдельно.
           </p>
         </div>
         <button className="button secondary" onClick={() => setNewAgent(true)}>
@@ -1253,68 +1233,23 @@ function ConnectorView({
         <div>
           <strong>Ваш компьютер. Ваша история.</strong>
           <p>
-            Коннектор общается с локальным API. Ключи OpenAI и Anthropic для
-            dashboard не нужны.
+            Коннектор общается с локальным API. Dashboard не запускает модели
+            и не требует ключей их провайдеров.
           </p>
         </div>
         <span className="local-badge">LOCAL / MCP</span>
       </div>
-      <div className="connector-grid">
-        {entries?.map(({ kind, config }) => {
-          const agent = agents.find((a) => a.id === kind);
-          return (
-            <article className={`connector-card ${kind}`} key={kind}>
-              <div className="connector-title">
-                <Avatar agent={agent} />
-                <div>
-                  <h2>{kindLabel(kind)}</h2>
-                  <span>Стандартный MCP · stdio</span>
-                </div>
-                <span className="client-tag">
-                  {kind === "codex" ? "01" : "02"}
-                </span>
-              </div>
-              <div className="connection-status">
-                <span
-                  className={`status-dot ${agent?.last_seen ? "seen" : ""}`}
-                />
-                {agent?.last_seen
-                  ? `Последний запрос ${date(agent.last_seen)}`
-                  : "Запросов пока нет"}
-              </div>
-              <p>
-                Добавьте конфигурацию в{" "}
-                <code>
-                  {kind === "codex" ? ".codex/config.toml" : ".mcp.json"}
-                </code>{" "}
-                нужного проекта.
-              </p>
-              <div className="code-block">
-                <div className="code-label">
-                  {kind === "codex" ? "TOML" : "JSON"}
-                  <button
-                    onClick={() => copy(config, kind)}
-                    aria-label={`Скопировать конфигурацию ${kindLabel(kind)}`}
-                  >
-                    {copied === kind ? (
-                      <Check size={15} />
-                    ) : (
-                      <Clipboard size={15} />
-                    )}{" "}
-                    {copied === kind ? "Скопировано" : "Копировать"}
-                  </button>
-                </div>
-                <pre>{config}</pre>
-              </div>
-              <p className="connector-hint">
-                {kind === "codex"
-                  ? "Откройте доверенный проект в новой сессии Codex и проверьте /mcp."
-                  : "Откройте проект в Claude Code, разрешите project MCP и проверьте /mcp."}
-              </p>
-            </article>
-          );
-        })}
-      </div>
+      {info&&<section className="connector-configurator" aria-label="Генератор MCP-конфигурации"><h2>Готовая конфигурация для вашего клиента</h2>
+        <div className="connector-config-controls"><label>Приложение / MCP-клиент<select value={client} onChange={event=>setClient(event.target.value)}>{info.client_profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
+        <label>Имя агента в истории<select value={identity} onChange={event=>{setIdentity(event.target.value);setTokenFile('');}}>{knownAgents.map(agent=><option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+        <label className="wide">Путь к JSON-файлу токена {['codex','claude'].includes(identity)&&'(необязательно для стандартной идентичности)'}<input value={tokenFile} onChange={event=>setTokenFile(event.target.value)} placeholder={insideVSCode?'Абсолютный путь на вашем компьютере':'Например, /Users/me/.config/dashai/qwen.json'} spellCheck={false}/></label></div>
+        <p className="connector-hint">Модель можно назвать как угодно: Qwen, Gemini, локальный агент или имя команды. Создайте отдельную идентичность, чтобы её действия различались в истории.</p>
+        {configError&&<ErrorBox message={configError}/>}
+        {configBusy&&<p className="muted" role="status">Формируем конфигурацию…</p>}
+        {generated&&!configBusy&&<><p>{client==='cline'?<>В Cline откройте MCP Servers → Configure MCP Servers и добавьте сервер в открытые настройки, сохранив остальные записи.</>:client==='generic'?<>Вставьте объект <code>command</code> и <code>args</code> в настройки локального stdio MCP своего клиента. Имя и расположение файла определяет клиент.</>:<>Добавьте настройки в <code>{generated.filename}</code> нужного проекта, сохранив остальные MCP-серверы.</>}</p><div className="code-block"><div className="code-label">{generated.format}<button onClick={()=>copy(generated.content,'generated')} aria-label="Скопировать MCP-конфигурацию">{copied==='generated'?<Check size={15}/>:<Clipboard size={15}/>} {copied==='generated'?'Скопировано':'Копировать'}</button></div><pre>{generated.content}</pre></div></>}
+        <div className="connection-status"><span className={`status-dot ${currentAgent?.last_seen?'seen':''}`}/>{currentAgent?.last_seen?`Последний запрос ${date(currentAgent.last_seen)}`:'Запросов пока нет'}</div>
+        <p className="connector-hint">Перезапустите MCP-сессию клиента и разрешите доступ к этому проекту. Конфигурация сама по себе не подтверждает подключение; первый реальный запрос появится в статусе агента.</p>
+      </section>}
       {!info && !error && (
         <div className="loading">
           <RefreshCw size={18} />
@@ -1382,8 +1317,9 @@ function ConnectorView({
               Для нескольких экземпляров создавайте отдельные токены. Тогда
               история покажет, какой агент внес правку.
             </p>
-            <Field label="Имя агента" name="name" required />
-            <Select label="Клиент" name="kind" defaultValue="codex">
+            <Field label="Имя модели или агента" name="name" required hint="Например, Qwen · ревью проекта" />
+            <Select label="Тип идентичности" name="kind" defaultValue="custom">
+              <option value="custom">Другая модель / свой агент</option>
               <option value="codex">Codex</option>
               <option value="claude">Claude Code</option>
             </Select>
@@ -1429,8 +1365,7 @@ function ConnectorView({
             </div>
             <p className="scope-note">
               В args коннектора используйте --token-file &lt;абсолютный путь&gt;
-              вместо --credentials, сохранив --agent codex или --agent claude. Идентичность определяется токеном
-              на сервере.
+              вместо --credentials и --agent {credential.agent.id}. Выберите эту идентичность в генераторе выше. Имя и права определяются токеном на сервере.
             </p>
             <button
               className="button primary"
@@ -1463,8 +1398,9 @@ export default function App() {
     [mobileMenu, setMobileMenu] = useState(false);
   const [mapDirty,setMapDirty]=useState(false);
   function setView(next:View) {
-    if(next!==view&&mapDirty&&!['map','architecture','documentation'].includes(next)) {
-      if(!window.confirm('Состав документа не сохранён. Покинуть карту и потерять эти настройки?'))return;
+    const withinMap=['map','architecture','documentation'].includes(view)&&['map','architecture','documentation'].includes(next);
+    if(next!==view&&mapDirty&&!withinMap) {
+      if(!window.confirm('Есть несохранённые изменения. Перейти без сохранения?'))return;
       setMapDirty(false);
     }
     setViewState(next);
@@ -1622,7 +1558,7 @@ export default function App() {
     }
   }
   function selectProject(id: string) {
-    if(mapDirty&&!window.confirm('Состав документа не сохранён. Перейти к другому проекту?'))return;
+    if(mapDirty&&!window.confirm('Есть несохранённые изменения. Перейти к другому проекту без сохранения?'))return;
     setMapDirty(false);
     setProjectId(id);
     setViewState("board");
@@ -1747,7 +1683,8 @@ export default function App() {
             .toLocaleLowerCase("ru")
             .includes(query.toLocaleLowerCase("ru"))),
     ) || [];
-  const isProjectView = ["board", "project_history", "map", "architecture", "documentation"].includes(view);
+  const isProjectView = ["board", "project_history", "map", "architecture", "documentation", "modules", "integrations"].includes(view);
+  const featureEnabled = (id:string) => board?.modules?.find(item=>item.id===id)?.enabled ?? ['map','architecture','documentation'].includes(id);
   const project = board?.project;
   return (
     <div className="app-shell">
@@ -1979,7 +1916,7 @@ export default function App() {
                   </span>
                   <span>
                     <Plug size={16} />
-                    Codex + Claude Code
+                    Любые MCP-агенты
                   </span>
                 </div>
               </div>
@@ -2145,7 +2082,9 @@ export default function App() {
                     <FolderKanban size={15} />
                     Доска<span className="count">{board.tasks.length}</span>
                   </button>
-                  {(['map','architecture','documentation'] as const).map(mode=><button key={mode} className={view===mode?'selected':''} onClick={()=>setView(mode)}>{mode==='map'?<FileCode2 size={15}/>:mode==='architecture'?<GitBranch size={15}/>:<List size={15}/>}{{map:'Карта проекта',architecture:'Архитектура',documentation:'Документация'}[mode]}</button>)}
+                  {(['map','architecture','documentation'] as const).filter(featureEnabled).map(mode=><button key={mode} className={view===mode?'selected':''} onClick={()=>setView(mode)}>{mode==='map'?<FileCode2 size={15}/>:mode==='architecture'?<GitBranch size={15}/>:<List size={15}/>}{{map:'Карта проекта',architecture:'Архитектура',documentation:'Документация'}[mode]}</button>)}
+                  {featureEnabled('integrations')&&<button className={view==='integrations'?'selected':''} onClick={()=>setView('integrations')}><Plug size={15}/>Интеграции</button>}
+                  <button className={view==='modules'?'selected':''} onClick={()=>setView('modules')}><Blocks size={15}/>Модули</button>
                   <button
                     className={view === "project_history" ? "selected" : ""}
                     onClick={() => setView("project_history")}
@@ -2172,7 +2111,10 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              {(view==='map'||view==='architecture'||view==='documentation')&&<Suspense fallback={<p className="muted">Загрузка карты проекта…</p>}><ProjectMap key={board.project.id} project={board.project} mode={view} onNotify={notify} onDirtyChange={setMapDirty} onShowMap={()=>setView('map')}/></Suspense>}
+              {(view==='map'||view==='architecture'||view==='documentation')&&(featureEnabled(view)||mapDirty)&&<Suspense fallback={<p className="muted">Загрузка карты проекта…</p>}><ProjectMap key={board.project.id} project={board.project} mode={view} onNotify={notify} onDirtyChange={setMapDirty} onShowMap={()=>setView(featureEnabled('map')?'map':'modules')}/></Suspense>}
+              {['map','architecture','documentation','integrations'].includes(view)&&!featureEnabled(view)&&<div className="module-empty"><h2>Этот модуль отключён</h2><p>Данные сохранены. Добавьте модуль обратно, чтобы продолжить работу.</p><button className="button secondary" onClick={()=>setView('modules')}>Модули проекта</button></div>}
+              {view==='modules'&&<ProjectModules key={board.project.id} project={board.project} notify={notify} onChanged={()=>void refresh(projectRef.current,true)} onDirtyChange={setMapDirty} onOpen={mode=>setView(mode as View)}/>}
+              {view==='integrations'&&(featureEnabled('integrations')||mapDirty)&&<ProjectIntegrations key={board.project.id} project={board.project} notify={notify} onDirtyChange={setMapDirty}/>}
               {view === "board" && (
                 <>
                   {!!board.subprojects?.length && <details className="subprojects-panel">
@@ -2310,10 +2252,7 @@ export default function App() {
                             <button className={`task-card ${task.status}`} key={task.id} onClick={() => openTask(task.id)}>
                               <div className="task-card-top">
                                 <span className="task-id">{task.short_id}</span>
-                                <span className={`priority-symbol ${task.priority}`} title={`Приоритет: ${priorities[task.priority]}`}>
-                                  <span aria-hidden="true">▂▄▆</span>
-                                  <span className="sr-only">{priorities[task.priority]}</span>
-                                </span>
+                                <PriorityMark priority={task.priority}/>
                               </div>
                               <div className="task-list-heading">
                                 <h3>{task.title}</h3>

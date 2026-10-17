@@ -183,9 +183,9 @@ async def check_ui(directory: Path, port: int, environment: dict):
                     await command("blocked-stop")
                     assert api(runtime["base_url"] + "/api/health")["mcp_running"] is True
         await evaluate("Array.from(document.querySelectorAll('.nav-item')).find(b=>b.textContent.startsWith('Коннекторы')).click()")
-        config = await wait_ui("document.querySelector('.connector-card.codex pre')?.textContent")
-        await click("Скопировать конфигурацию Codex")
-        await wait_ui("document.querySelector('.connector-card.codex')?.textContent.includes('Скопировано')", timeout=10)
+        config = await wait_ui("document.querySelector('.connector-configurator pre')?.textContent")
+        await click("Скопировать MCP-конфигурацию")
+        await wait_ui("document.querySelector('.connector-configurator')?.textContent.includes('Скопировано')", timeout=10)
         await command("clipboard", expected=config)
         observed_reply = await parent_evaluate("window.dashaiQAReply")
         assert observed_reply["origin"] == origins["ancestors"][0] and observed_reply["sourceIsWindow"] is False

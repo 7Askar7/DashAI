@@ -144,16 +144,9 @@
   font-size: 11px;
 }
 
-.kanban-priority {
+.kanban-card-top .priority-mark {
   margin-left: auto;
   font-size: 11px;
-  color: #b2bfce;
-}
-.kanban-priority.urgent {
-  color: #fba7a7;
-}
-.kanban-priority.high {
-  color: #f2cb87;
 }
 
 .kanban-drag-handle {

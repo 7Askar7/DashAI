@@ -9,6 +9,24 @@ from server import create_app
 BROWSER = {'X-Dashboard-Client': 'browser'}
 
 
+def test_large_project_snapshot_preserves_all_paths_and_rejects_overflow(tmp_path):
+    with TestClient(create_app(tmp_path), base_url='http://127.0.0.1:4242') as client:
+        project = client.post('/api/projects', json={'name': 'Large repository', 'reason': 'Check large snapshot'}, headers=BROWSER).json()
+        url = f"/api/projects/{project['id']}/map"
+        files = [{'path': f'packages/area-{index // 100}/file-{index}.ts', 'sha256': '1' * 64,
+                  'description': {'title': f'Module {index}', 'summary': 'Describe a large source snapshot', 'purpose': 'Keep every file reachable'}} for index in range(10000)]
+        payload = {'expected_version': 0, 'source_revision': 'large-source', 'files': files, 'reason': 'Publish full permitted snapshot'}
+        response = client.put(url, headers=BROWSER, json=payload)
+        assert response.status_code == 200, response.text
+        saved = client.get(url).json()
+        assert len(saved['files']) == 10000 and saved['files'][-1]['path'] == files[-1]['path']
+        events = len(client.get(f"/api/projects/{project['id']}/export").json()['events'])
+        overflow = {**payload, 'expected_version': 1, 'files': files + [{'path': 'overflow.ts', 'sha256': '2' * 64}]}
+        assert client.put(url, headers=BROWSER, json=overflow).status_code == 422
+        assert client.get(url).json()['version'] == 1
+        assert len(client.get(f"/api/projects/{project['id']}/export").json()['events']) == events
+
+
 def test_project_map_shared_versions_safety_audit_and_restart(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     with TestClient(app, base_url='http://127.0.0.1:4242') as client:

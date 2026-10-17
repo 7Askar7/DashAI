@@ -107,7 +107,7 @@ class MapWrite(Model):
 
 class MapPublish(MapWrite):
     source_revision: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
-    files: list[MapFile] = Field(max_length=2000)
+    files: list[MapFile] = Field(max_length=10000)
     diagrams: list[MapDiagram] | None = Field(default=None, max_length=100)
 
     @model_validator(mode='after')
@@ -127,8 +127,8 @@ class MapPublish(MapWrite):
             refs += [p for d in self.diagrams for p in d.related_paths]
         if any(p not in paths for p in refs):
             raise ValueError('Связанные пути должны присутствовать в том же снимке')
-        if len(self.model_dump_json().encode()) > 2_000_000:
-            raise ValueError('Снимок превышает 2 MB; сократите область анализа')
+        if len(self.model_dump_json().encode()) > 8_000_000:
+            raise ValueError('Снимок превышает 8 MB; сократите область анализа')
         return self
 
 
@@ -178,8 +178,8 @@ def install_routes(app, store, actor, authenticated_read, session):
     def save(db, project_id, before, after, body, who, request, action):
         after.update(version=before['version'] + 1, updated_at=now(), author_id=who['id'], author_name=who['name'])
         encoded = encode(after)
-        if len(encoded.encode()) > 3_000_000:
-            raise HTTPException(422, 'Сохранённая карта превышает 3 MB; сократите область анализа')
+        if len(encoded.encode()) > 12_000_000:
+            raise HTTPException(422, 'Сохранённая карта превышает 12 MB; сократите область анализа')
         db.execute('INSERT INTO project_maps VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (project_id, encoded))
         db.execute('INSERT INTO project_map_revisions VALUES (?,?,?)', (project_id, after['version'], encoded))
         store.record(db, who, body.reason, 'project_map', project_id, action, summary(before), summary(after), project_id=project_id, session_id=session(request))

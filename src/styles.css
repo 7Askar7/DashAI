@@ -928,21 +928,6 @@ button:focus:not(:focus-visible) {
   color: #9aacc0;
   letter-spacing: 0.3px;
 }
-.priority-symbol {
-  color: #a3aeba;
-  font-size: 11px;
-  line-height: 1;
-}
-.priority-symbol.high,
-.priority-symbol.urgent {
-  color: #f6c786;
-}
-.priority-symbol.urgent {
-  color: var(--red);
-}
-.priority-symbol.low {
-  color: #92a9c4;
-}
 .task-card h3 {
   font-size: 14px;
   color: #e3eaf3;
@@ -1894,21 +1879,6 @@ button:focus:not(:focus-visible) {
   background: #3d2630;
   border-color: #80525b;
 }
-.priority {
-  display: flex;
-  gap: 5px;
-  font-size: 10px;
-  color: #bec8d6;
-  align-items: center;
-}
-.priority.high,
-.priority.urgent {
-  color: #ecc19c;
-}
-.priority-bars {
-  font-size: 11px;
-  letter-spacing: -1px;
-}
 .assigned {
   display: flex;
   align-items: center;
@@ -2473,9 +2443,6 @@ button:focus:not(:focus-visible) {
     color: #f5c0c0;
     background: #3f2730;
     border-color: #84535c;
-  }
-  .board .priority-symbol {
-    margin-right: 100px;
   }
   .board.is-list .task-card {
     display: flex;

@@ -12,7 +12,7 @@ export const taskTypes: Record<TaskType, string> = {
 export type Agent = {
   id: string;
   name: string;
-  kind: "human" | "codex" | "claude";
+  kind: "human" | "codex" | "claude" | "custom";
   last_seen: string | null;
   created_at: string;
 };
@@ -117,6 +117,18 @@ export type Board = {
   subprojects: Subproject[];
   tasks: Task[];
   activity: Event[];
+  modules?: Pick<ProjectModule, 'id' | 'name' | 'kind' | 'enabled' | 'version'>[];
+};
+export type ProjectModule = {
+  id: string;
+  name: string;
+  description: string;
+  kind: 'feature' | 'document';
+  default_enabled: boolean;
+  template?: string;
+  enabled: boolean;
+  version: number;
+  content: string;
 };
 export type Detail = { task: Task; events: Event[]; notes: Note[] };
 export type Bootstrap = {
@@ -132,6 +144,7 @@ export type Connectors = {
   data_dir: string;
   desktop: boolean;
   agents: Agent[];
+  client_profiles: {id:string;label:string;filename:string;format:string;scope:string}[];
 };
 
 export const statuses: { value: Status; label: string; color: string }[] = [

@@ -1,8 +1,8 @@
 {
   "name": "agentboard",
   "displayName": "DashAI",
-  "description": "A local Kanban dashboard for Codex and Claude Code: projects, subprojects, tasks, and change history inside VS Code.",
-  "version": "1.5.2",
+  "description": "A local workspace for coding agents: shared tasks, searchable project maps, architecture, documentation modules, and optional Confluence/Jira sync.",
+  "version": "1.6.0",
   "publisher": "7Askar7",
   "icon": "assets/dashai-logo-128.png",
   "galleryBanner": {
