@@ -1,7 +1,7 @@
 """Load the real VSIX into an isolated VS Code and exercise its actual Webview.
 
-Requires installed Windows x64 VS Code and the repository's dev Python environment.
-Uses Microsoft's extension-test entry point and Playwright's browser CDP support.
+Requires official Windows x64 VS Code and the repository's dev Python environment.
+Uses an isolated QA extension and Playwright's browser CDP support.
 The native save-dialog selection is stubbed; its bridge and filesystem write are real.
 """
 from __future__ import annotations
@@ -79,7 +79,9 @@ async def attach_iframe(connection, target_id):
 
 
 async def check_ui(directory: Path, port: int, environment: dict):
-    ready = await wait_file(directory / "ready.json")
+    # Cold workbench startup, native runtime copying/start and connector setup are
+    # separate bounded phases; their combined readiness can exceed one minute.
+    ready = await wait_file(directory / "ready.json", timeout=180)
     runtime = ready["runtime"]
     assert runtime["data_dir"] == str(directory / "local" / "Agentboard")
     repository = directory / "repo with spaces"
@@ -147,9 +149,15 @@ async def check_ui(directory: Path, port: int, environment: dict):
         await fill("task_type", "testing")
         await fill("rationale", "Validate the editor and shared API")
         await fill("acceptance_criteria", "MCP changes appear in the editor")
+        await click("Свой исполнитель")
+        await evaluate("(() => {const input=document.querySelector('.assignee-create input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'VSIX QA team');input.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        await click("Сохранить исполнителя")
+        await wait_ui("document.querySelector('select[name=assignee_id]')?.selectedOptions[0]?.textContent==='VSIX QA team'")
         await click("Создать")
         await wait_ui("!!document.querySelector('.drawer-body')")
         await click("Закрыть")
+        identity = next(item for item in api(runtime["base_url"] + "/api/bootstrap")["agents"] if item["name"] == "VSIX QA team")
+        assert api(runtime["base_url"] + "/api/projects/" + project["id"])["tasks"][0]["assignee_id"] == identity["id"]
         assert await evaluate("document.querySelectorAll('.kanban-column').length") == 5
         session_parameters = StdioServerParameters(command=str(companion), args=["--mcp", "--agent", "codex",
             "--data-dir", runtime["data_dir"], "--session-id", "vscode-actual-qa"], env=environment)
@@ -179,6 +187,11 @@ async def check_ui(directory: Path, port: int, environment: dict):
                         "diagrams": [{"id": "qa-flow", "title": "VSIX flow", "notation": "flowchart",
                             "scope": "Isolated QA", "legend": "Arrows show publication", "explanation": "MCP publishes to the UI",
                             "source": "flowchart LR\n  MCP --> API --> UI", "related_paths": ["src/App.tsx"]}]})
+                    await tool("configure_project_module", {"project_id": project["id"], "module_id": "releases",
+                        "expected_version": 0, "enabled": True, "reason": "Verify bundled release UI", "idempotency_key": "vsix-releases-on"})
+                    release = await tool("create_project_release", {"project_id": project["id"], "version_name": "VSIX release",
+                        "changelog": "Release history from the real frozen MCP", "status": "released", "released_at": "2026-10-17",
+                        "reason": "Verify shared release journal", "idempotency_key": "vsix-release"})
                     await wait_ui("Array.from(document.querySelectorAll('.kanban-card')).some(b=>b.textContent.includes(" + json.dumps(task["title"]) + "))")
                     await command("blocked-stop")
                     assert api(runtime["base_url"] + "/api/health")["mcp_running"] is True
@@ -217,17 +230,25 @@ async def check_ui(directory: Path, port: int, environment: dict):
         await click("Сохранить состав")
         await wait_ui("document.querySelector('.map-settings button')?.disabled && !document.querySelector('.map-settings').disabled")
         await browser.contexts[0].pages[0].screenshot(path=str(directory / "editor-board.png"))
+        await wait_ui("Array.from(document.querySelectorAll('.tabs-nav button')).some(button=>button.textContent.trim()==='Версии')")
+        await click("Версии")
+        await wait_ui("document.querySelector('.release-row')?.textContent.includes('VSIX release')")
+        await evaluate("document.querySelector('.release-row').click()")
+        await wait_ui("document.querySelector('.release-document')?.textContent.includes('Release history from the real frozen MCP')")
+        await browser.contexts[0].pages[0].screenshot(path=str(directory / "editor-releases.png"))
         await command("restart")
         next_runtime = read_json(directory / "runtime-after-restart.json")
         stored = api(next_runtime["base_url"] + "/api/projects/" + project["id"])
         assert {task["title"], "VSCode UI task"} <= {item["title"] for item in stored["tasks"]}
+        assert api(next_runtime["base_url"] + "/api/projects/" + project["id"] + "/releases/" + release["id"])["status"] == "released"
         assert companion.is_file() and (repository / ".mcp.json").is_file()
         await command("finish")
         return {"status": "passed", "vscode": ready["vscode"], "extension_version": runtime["version"],
             "parent_origins": origins["ancestors"], "checks": ["isolated packaged VSIX", "real editor iframe", "UI task creation",
                 "five-column shared Kanban", "frozen MCP task/claim/change visible", "MCP shutdown guard", "VSCode clipboard bridge",
                 "native export bridge (save-dialog selection stubbed)", "frozen MCP map in editor and Mermaid rendering",
-                "Markdown and HTML documentation host bridge", "persistent data after runtime restart", "durable MCP configs"]}
+                "Markdown and HTML documentation host bridge", "persistent data after runtime restart", "durable MCP configs",
+                "custom assignee created and assigned through real editor UI", "frozen MCP release history visible and persistent in editor"]}
 
 
 def main():
