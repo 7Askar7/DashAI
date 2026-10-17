@@ -36,6 +36,15 @@ exports.run = async function () {
   try {
     let api;
     if (native) {
+      assert(vscode.workspace.isTrusted, 'The isolated local QA workspace is trusted.');
+      assert(extension.packageJSON.activationEvents.includes('onStartupFinished'));
+      assert(extension.packageJSON.contributes.commands.some(command => command.command === 'agentboard.open'));
+      // The test entry can run before workbench startup finishes. Verify natural startup
+      // activation before sending a renderer command; never activate the product ourselves.
+      await progress('waiting for declared startup activation');
+      const startupDeadline = Date.now() + 30000;
+      while (!extension.isActive && Date.now() < startupDeadline) await pause(100);
+      assert(extension.isActive, 'Declared onStartupFinished activation did not complete within 30 seconds.');
       await progress('opening board through its user command');
       await vscode.commands.executeCommand('agentboard.open');
       api = extension.exports;

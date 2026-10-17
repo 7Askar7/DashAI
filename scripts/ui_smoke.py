@@ -219,8 +219,8 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 page.set_viewport_size({'width':1440,'height':1000})
                 page.get_by_role('button',name='Коннекторы',exact=False).first.click()
                 expect(page.locator('.connector-configurator pre')).to_contain_text('--agent')
-                expect(page.get_by_label('Приложение / MCP-клиент',exact=True).locator('option')).to_have_count(6)
-                page.get_by_label('Приложение / MCP-клиент',exact=True).select_option('cursor')
+                expect(page.get_by_label('Приложение / MCP-клиент',exact=False).locator('option')).to_have_count(6)
+                page.get_by_label('Приложение / MCP-клиент',exact=False).select_option('cursor')
                 expect(page.locator('.connector-configurator')).to_contain_text('.cursor/mcp.json')
                 assert 'mcpServers' in page.locator('.connector-configurator pre').inner_text()
                 page.get_by_role('button',name='Отдельный агент',exact=True).click()
@@ -231,7 +231,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 dialog.get_by_role('button',name='Токен сохранен',exact=True).click()
                 identity=next(agent for agent in request('/bootstrap')['agents'] if agent['name']=='Qwen · локальный ревьюер')
                 assert identity['kind']=='custom' and identity['last_seen'] is None
-                expect(page.get_by_label('Имя агента в истории',exact=True)).to_have_value(identity['id'])
+                expect(page.get_by_label('Имя агента в истории',exact=False)).to_have_value(identity['id'])
                 page.locator('.connector-config-controls input').fill(str((ARTIFACTS/'never-read-token-file.json').resolve()))
                 expect(page.locator('.connector-configurator pre')).to_contain_text(identity['id'])
                 assert '--token-file' in page.locator('.connector-configurator pre').inner_text()
@@ -393,7 +393,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 page.locator('.project-tabs').get_by_role('button',name='Интеграции',exact=True).click()
                 expect(page.locator('.integration-row')).to_have_count(2)
                 expect(page.get_by_role('button',name='Проверить и подключить',exact=True).first).to_be_disabled()
-                page.locator('.integration-row').first.get_by_label('Размещение',exact=True).select_option('data_center')
+                page.locator('.integration-row').first.get_by_label('Размещение',exact=False).select_option('data_center')
                 expect(page.locator('.integration-row').first.get_by_label('Personal Access Token',exact=True)).to_have_attribute('type','password')
                 page.once('dialog',lambda value:value.accept())
                 page.locator('.project-tabs').get_by_role('button',name='Модули',exact=True).click()
@@ -411,6 +411,9 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
             (ARTIFACTS/'ui-results.json').write_text(json.dumps({'passed':checks,'count':len(checks)},ensure_ascii=False,indent=2),encoding='utf-8')
             print(f'PASS: {len(checks)} browser integration checks; artifacts/qa/ui-results.json')
         finally:
-            process.terminate()
+            if os.name=='nt':
+                subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            else:
+                process.terminate()
             try: process.wait(timeout=5)
             except subprocess.TimeoutExpired: process.kill();process.wait()
