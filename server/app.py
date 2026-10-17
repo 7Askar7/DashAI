@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from .project_map import SCHEMA as MAP_SCHEMA, install_routes as install_map_routes
 from .modules import SCHEMA as MODULE_SCHEMA, install_routes as install_module_routes, project_modules
 from .integrations import SCHEMA as INTEGRATION_SCHEMA, install_routes as install_integration_routes, enqueue as enqueue_integrations
+from .releases import SCHEMA as RELEASE_SCHEMA, ReleasePatch, install_routes as install_release_routes
 
 ROOT = Path(__file__).resolve().parents[1]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
@@ -152,6 +153,7 @@ class ChangeCreate(Write):
 class AgentCreate(Write):
     name: Text
     kind: Literal["codex", "claude", "custom"] = "custom"
+    issue_token: bool = True
 
 
 class ConnectorConfig(StrictModel):
@@ -188,7 +190,7 @@ class Store:
         self.credentials_file = self.data_dir / "connector-secrets.json"
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
-            db.executescript(SCHEMA + MAP_SCHEMA + MODULE_SCHEMA + INTEGRATION_SCHEMA)
+            db.executescript(SCHEMA + MAP_SCHEMA + MODULE_SCHEMA + INTEGRATION_SCHEMA + RELEASE_SCHEMA)
         issued = {}
         with self.transaction() as db:
             for agent_id, name, kind in [("human", "Вы", "human"), ("codex", "Codex", "codex"), ("claude", "Claude Code", "claude")]:
@@ -271,7 +273,7 @@ class Store:
         if summary:
             # Polling avoids decoding document bodies; history/export keep the complete audit.
             columns = "id,project_id,task_id,entity_type,entity_id,action,actor_id,actor_name,actor_kind,reason,created_at,session_id," + ",".join(
-                f"CASE WHEN entity_type='project_module' THEN json_remove({field},'$.content') ELSE {field} END AS {field}"
+                f"CASE WHEN entity_type='project_module' THEN json_remove({field},'$.content') WHEN entity_type='project_release' THEN json_remove({field},'$.changelog') ELSE {field} END AS {field}"
                 for field in ("before_json", "after_json"))
         query = f"SELECT {columns} FROM events {where} ORDER BY id DESC"
         if tail:
@@ -289,7 +291,7 @@ class Store:
         payload = model.model_dump(exclude={"idempotency_key"})
         if isinstance(model, TaskPatch) and "subproject_id" not in model.changes.model_fields_set:
             payload["changes"].pop("subproject_id", None)
-        elif isinstance(model, SubprojectPatch):
+        elif isinstance(model, (SubprojectPatch, ReleasePatch)):
             payload["changes"] = model.changes.model_dump(exclude_unset=True)
         with self.transaction() as db:
             if model.idempotency_key:
@@ -662,6 +664,7 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             result['project_map'] = next(iter(store.entities(db, 'project_maps', 'WHERE id=?', (project_id,))), None)
             result['project_map_revisions'] = [json.loads(row['payload']) for row in db.execute('SELECT payload FROM project_map_revisions WHERE project_id=? ORDER BY version', (project_id,))]
             result['modules'] = project_modules(db, project_id)
+            result['releases'] = store.entities(db, 'project_releases', 'WHERE project_id=?', (project_id,))
             return JSONResponse(result, headers={"Content-Disposition": f'attachment; filename="agentboard-{project_id}.json"'})
 
     @app.get("/api/connectors", dependencies=[Depends(authenticated_read)])
@@ -698,19 +701,24 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
     @app.post("/api/agents")
     def create_agent(body: AgentCreate, request: Request, who=Depends(actor)):
         if who["kind"] != "human":
-            raise HTTPException(403, "Только человек может выпускать токены для агентов")
-        if body.idempotency_key:
+            raise HTTPException(403, "Только человек может добавлять исполнителей и выпускать токены")
+        if body.issue_token and body.idempotency_key:
             raise HTTPException(422, "Выдача токена одноразовая: idempotency_key здесь не поддерживается")
-        with store.transaction() as db:
-            token, agent_id = secrets.token_urlsafe(32), str(uuid4())
-            db.execute("INSERT INTO agents VALUES (?,?,?,?,?,?)", (agent_id, body.name, body.kind, store.hash(token), None, now()))
+        def operation(db):
+            token, agent_id = secrets.token_urlsafe(32) if body.issue_token else None, str(uuid4())
+            db.execute("INSERT INTO agents VALUES (?,?,?,?,?,?)", (agent_id, body.name, body.kind, store.hash(token) if token else None, None, now()))
             agent = next(item for item in store.agents(db) if item["id"] == agent_id)
             store.record(db, who, body.reason, "agent", agent_id, "agent.created", None, agent, session_id=session(request))
             return {"agent": agent, "token": token}
+        if not body.issue_token:
+            return store.write(who, "/api/agents", body, operation)
+        with store.transaction() as db:
+            return operation(db)
 
     install_map_routes(app, store, actor, authenticated_read, session)
     install_module_routes(app, store, actor, authenticated_read, session)
     install_integration_routes(app, store, actor, authenticated_read, session)
+    install_release_routes(app, store, actor, authenticated_read, session)
     dist = ROOT / "dist"
 
     @app.get("/{path:path}", include_in_schema=False)

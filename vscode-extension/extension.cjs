@@ -64,6 +64,15 @@ async function discover(dataDir) {
 
 const needsRuntimeUpgrade = (runtime, version) => runtime.mode === 'vscode' && !runtime.mcp_running && runtime.version.localeCompare(version, 'en', { numeric: true }) < 0;
 
+function runtimeStatus(runtime, version) {
+  const older = runtime.version.localeCompare(version, 'en', { numeric: true }) < 0;
+  return {
+    text: runtime.version === version ? `$(project) DashAI ${version}` : `$(warning) DashAI ${runtime.version} → ${version}`,
+    tooltip: older ? `Для новых функций нужен сервер ${version}. Сохраните правки, завершите MCP-подключения в клиентах, затем выполните «DashAI: Остановить локальный сервер» и «DashAI: Открыть доску».` :
+      `Расширение ${version}; запущенный сервер ${runtime.version}. Открыть проекты, задачи и историю.`,
+  };
+}
+
 async function copyRuntime(extensionDir, dataDir, version) {
   const parent = path.join(dataDir, 'vscode-runtime');
   const destination = path.join(parent, version);
@@ -170,8 +179,11 @@ function activate(context) {
         if (!existing) throw new Error('Не удалось запустить доску. Если открыт Agentboard 1.3 или старше, закройте его окно и повторите. Журнал: ' + path.join(dataDir, 'logs', 'desktop.log'));
       }
       runtime = existing;
+      const visibleStatus = runtimeStatus(existing, version);
+      status.text = visibleStatus.text;
+      status.tooltip = visibleStatus.tooltip;
       if (existing.version !== version) {
-        vscode.window.showInformationMessage(`Доска работает на версии ${existing.version}. Новая версия применится после завершения MCP-сессий и повторного открытия доски.`);
+        vscode.window.showWarningMessage(`Установлено расширение ${version}, но сервер DashAI работает на ${existing.version}. ${visibleStatus.tooltip}`);
       }
       if (!heartbeat) heartbeat = setInterval(() => {
         if (runtime) requestJson(runtime.base_url + '/api/health', 'GET', {}, 16384).catch(() => {});
@@ -254,6 +266,8 @@ function activate(context) {
     if (!active) return;
     await stopRuntime(active);
     runtime = null;
+    status.text = `$(project) DashAI ${version}`;
+    status.tooltip = 'Сервер остановлен. Открыть доску с установленной версией.';
     panel?.dispose();
     vscode.window.showInformationMessage('Локальная доска остановлена. Данные сохранены.');
   });
@@ -275,4 +289,4 @@ function activate(context) {
 }
 
 function deactivate() { clearInterval(heartbeat); heartbeat = undefined; }
-module.exports = { activate, deactivate, parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, binaryName, personalDataDir };
+module.exports = { activate, deactivate, parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, runtimeStatus, binaryName, personalDataDir };

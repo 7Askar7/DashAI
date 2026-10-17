@@ -7,7 +7,7 @@ const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const vm = require('node:vm');
-const { parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, binaryName, personalDataDir } = require('../extension.cjs');
+const { parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, runtimeStatus, binaryName, personalDataDir } = require('../extension.cjs');
 
 test('macOS uses native binary names and Application Support; Windows retains its existing location', () => {
   assert.equal(binaryName('AgentboardMCP', 'darwin'), 'AgentboardMCP');
@@ -55,6 +55,15 @@ test('Version lifecycle never stops newer runtimes, desktop or active MCP', () =
   assert.equal(needsRuntimeUpgrade(runtime, '1.4.0'), false);
   assert.equal(needsRuntimeUpgrade({ ...runtime, mode: 'desktop' }, '1.5.0'), false);
   assert.equal(needsRuntimeUpgrade({ ...runtime, mcp_running: true }, '1.5.0'), false);
+});
+
+test('Pending runtime upgrade remains visible after the notification disappears', () => {
+  const pending = runtimeStatus({version:'1.5.2',mode:'vscode',mcp_running:true}, '1.7.0');
+  assert.match(pending.text, /warning.*1\.5\.2.*1\.7\.0/);
+  assert.match(pending.tooltip, /MCP.*Остановить локальный сервер.*Открыть доску/);
+  assert.equal(needsRuntimeUpgrade({version:'1.5.2',mode:'vscode',mcp_running:true}, '1.7.0'), false);
+  assert.match(runtimeStatus({version:'1.7.0'}, '1.7.0').text, /project.*1\.7\.0/);
+  assert.doesNotMatch(runtimeStatus({version:'1.8.0'}, '1.7.0').tooltip, /Остановить/);
 });
 
 test('Concurrent runtime staging retains durable MCP path and personal data', async () => {

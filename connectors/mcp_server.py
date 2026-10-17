@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 if __package__ in {None, ''}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server.project_map import MapFile, MapDiagram
+from server.releases import ReleaseChanges, ReleaseStatus, ReleaseDate, VersionName, Changelog, Link, Revision, Title as ReleaseTitle
 
 ROOT = Path(__file__).resolve().parents[1]
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -56,6 +57,8 @@ INSTRUCTIONS = (
     "Descriptions are drafts; source_revision is the analyzed snapshot, not evidence of current filesystem state. "
     "Optional project modules are Markdown templates, not executable plugins. Read their current version before changing "
     "content/enabled state; disabling preserves content. Page module summaries or request a specific module's full content."
+    " Project release records describe reported deployments; they do not perform or verify deployment. Enable the releases "
+    "module before writing. Read the current release version before edits; released/rolled_back records require YYYY-MM-DD."
 )
 
 
@@ -565,6 +568,46 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
         """Create a reusable Markdown module template for projects; never installs packages or executes user code."""
         return clipped(api("POST", "/api/modules", {"name": name, "description": description,
                        "template": template, "reason": reason, "idempotency_key": idempotency_key}))
+
+    @server.tool(annotations=READ)
+    def list_project_releases(project_id: Identifier, q: Annotated[str, Field(max_length=200)] = "",
+                              status: ReleaseStatus | None = None,
+                              environment: Annotated[str, Field(max_length=100)] | None = None,
+                              offset: Annotated[int, Field(ge=0)] = 0, limit: Limit = 30) -> dict[str, Any]:
+        """Page release summaries and changelog_preview (300 characters). Use get_project_release for full text; hidden modules retain history."""
+        params = {"q": q, "offset": offset, "limit": limit}
+        if status is not None:
+            params["status"] = status
+        if environment is not None:
+            params["environment"] = environment
+        return api("GET", entity_path("projects", project_id) + "/releases?" + urlencode(params))
+
+    @server.tool(annotations=READ)
+    def get_project_release(project_id: Identifier, release_id: Identifier) -> dict[str, Any]:
+        """Read one full release record and its current version. A recorded release is not proof of a live deployment."""
+        return api("GET", entity_path("projects", project_id) + "/releases/" + quote(release_id, safe=""))
+
+    @server.tool(annotations=WRITE)
+    def create_project_release(project_id: Identifier, version_name: VersionName, changelog: Changelog,
+                               reason: Reason, idempotency_key: Key, title: ReleaseTitle = "",
+                               status: ReleaseStatus = "draft", environment: VersionName = "production",
+                               released_at: ReleaseDate | None = None, link: Link = "",
+                               source_revision: Revision = "") -> dict[str, Any]:
+        """Record what changed in a project version. The releases module must be enabled; published/rolled-back records need a calendar date."""
+        return api("POST", entity_path("projects", project_id) + "/releases", {
+            "version_name": version_name, "title": title, "status": status, "environment": environment,
+            "released_at": released_at, "changelog": changelog, "link": link, "source_revision": source_revision,
+            "reason": reason, "idempotency_key": idempotency_key,
+        })
+
+    @server.tool(annotations=WRITE)
+    def update_project_release(project_id: Identifier, release_id: Identifier, expected_version: Version,
+                               changes: ReleaseChanges, reason: Reason, idempotency_key: Key) -> dict[str, Any]:
+        """Update a freshly read release with optimistic version checking. Omitted fields stay intact; a draft's date can be cleared with null."""
+        return api("PATCH", entity_path("projects", project_id) + "/releases/" + quote(release_id, safe=""), {
+            "expected_version": expected_version, "changes": changes.model_dump(exclude_unset=True),
+            "reason": reason, "idempotency_key": idempotency_key,
+        })
 
     @server.tool(annotations=WRITE)
     def publish_project_map(project_id: Identifier, expected_version: Annotated[int, Field(ge=0)],

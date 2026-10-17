@@ -7,6 +7,7 @@ Start with `AGENTS.md`, `docs/architecture.md`, the relevant `docs/research/` fi
 | HTTP and task domain | `server/app.py` | A mutation and its audit event commit together; stale versions fail rather than overwrite. |
 | Project descriptions and diagrams | `server/project_map.py`, `src/ProjectMap.tsx`, `docs/project-map.md` | One manifest and immutable revisions; prose starts as a draft. |
 | Optional project content | `server/modules.py` | Disabling a module preserves its content; user templates are Markdown, not executable plugins. |
+| Release history | `server/releases.py`, `src/ProjectReleases.tsx`, `docs/project-releases.md` | A recorded release is user/agent input, not deployment evidence; preserve records when disabled and write audit atomically. |
 | MCP tools and clients | `connectors/mcp_server.py`, `connectors/setup.py`, `connectors/presets.py`, `docs/connectors.md` | Use the common HTTP domain; keep client format independent from identity/model display name. |
 | Desktop/runtime and releases | `desktop/runtime.py`, `desktop/mcp_entry.py`, `scripts/`, `docs/release.md`, `docs/vscode.md` | Personal data remains outside bundles; build and verify each native target. |
 | UI and shared API types | `src/App.tsx`, `src/api.ts`, `src/styles.css` | Keep actual errors and unsaved edits visible; verify the user flow. |

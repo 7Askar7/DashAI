@@ -63,10 +63,12 @@ import KanbanBoard from "./KanbanBoard";
 import PriorityMark from './PriorityMark';
 import ProjectModules from './ProjectModules';
 import ProjectIntegrations from './ProjectIntegrations';
+import ProjectReleases from './ProjectReleases';
+import AssigneeSelect from './AssigneeSelect';
 import { insideVSCode, hostRequest, writeClipboard } from "./host";
 const ProjectMap = lazy(() => import('./ProjectMap'));
 
-type View = "overview" | "board" | "project_history" | "history" | "connectors" | "map" | "architecture" | "documentation" | "modules" | "integrations";
+type View = "overview" | "board" | "project_history" | "history" | "connectors" | "map" | "architecture" | "documentation" | "modules" | "integrations" | "releases";
 type Modal =
   | { kind: "project"; project?: Project }
   | { kind: "subproject"; subproject?: Subproject; parent_id?: string }
@@ -483,14 +485,7 @@ function EntityForm({
                   </option>
                 ))}
               </Select>
-              <Select label="Исполнитель" name="assignee_id">
-                <option value="">Не назначен</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </Select>
+              <AssigneeSelect agents={agents} disabled={busy}/>
             </div>
             {board && board.tasks.length > 0 && (
               <details className="dependency-picker">
@@ -636,6 +631,12 @@ function Events({
                                 depends_on: "Зависимости",
                                 name: "Название",
                                 claim_owner_id: "Владелец",
+                                version_name: "Номер версии",
+                                environment: "Окружение",
+                                released_at: "Дата выпуска",
+                                changelog: "Изменения выпуска",
+                                source_revision: "Commit / tag",
+                                link: "Ссылка",
                               } as Record<string, string>
                             )[k] || k}
                           </dt>
@@ -667,7 +668,7 @@ function Events({
 function formatValue(key: string, value: unknown, agents: Agent[]) {
   if (value == null || value === "") return "—";
   if (key === "status")
-    return statuses.find((s) => s.value === value)?.label || String(value);
+    return statuses.find((s) => s.value === value)?.label || ({draft:'Черновик',released:'Выпущена',rolled_back:'Откачена'} as Record<string,string>)[String(value)] || String(value);
   if (key === "priority")
     return priorities[value as keyof typeof priorities] || String(value);
   if (key === "task_type")
@@ -901,18 +902,7 @@ function TaskDrawer({
               </Select>
             </div>
             <div className="form-row">
-              <Select
-                label="Исполнитель"
-                name="assignee_id"
-                defaultValue={task.assignee_id || ""}
-              >
-                <option value="">Не назначен</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </Select>
+              <AssigneeSelect agents={agents} defaultValue={task.assignee_id || ""} disabled={busy}/>
               <Select
                 label="Тип задачи"
                 name="task_type"
@@ -1683,7 +1673,7 @@ export default function App() {
             .toLocaleLowerCase("ru")
             .includes(query.toLocaleLowerCase("ru"))),
     ) || [];
-  const isProjectView = ["board", "project_history", "map", "architecture", "documentation", "modules", "integrations"].includes(view);
+  const isProjectView = ["board", "project_history", "map", "architecture", "documentation", "modules", "integrations", "releases"].includes(view);
   const featureEnabled = (id:string) => board?.modules?.find(item=>item.id===id)?.enabled ?? ['map','architecture','documentation'].includes(id);
   const project = board?.project;
   return (
@@ -2084,6 +2074,7 @@ export default function App() {
                   </button>
                   {(['map','architecture','documentation'] as const).filter(featureEnabled).map(mode=><button key={mode} className={view===mode?'selected':''} onClick={()=>setView(mode)}>{mode==='map'?<FileCode2 size={15}/>:mode==='architecture'?<GitBranch size={15}/>:<List size={15}/>}{{map:'Карта проекта',architecture:'Архитектура',documentation:'Документация'}[mode]}</button>)}
                   {featureEnabled('integrations')&&<button className={view==='integrations'?'selected':''} onClick={()=>setView('integrations')}><Plug size={15}/>Интеграции</button>}
+                  {featureEnabled('releases')&&<button className={view==='releases'?'selected':''} onClick={()=>setView('releases')}><GitBranch size={15}/>Версии</button>}
                   <button className={view==='modules'?'selected':''} onClick={()=>setView('modules')}><Blocks size={15}/>Модули</button>
                   <button
                     className={view === "project_history" ? "selected" : ""}
@@ -2112,9 +2103,10 @@ export default function App() {
                 </div>
               </div>
               {(view==='map'||view==='architecture'||view==='documentation')&&(featureEnabled(view)||mapDirty)&&<Suspense fallback={<p className="muted">Загрузка карты проекта…</p>}><ProjectMap key={board.project.id} project={board.project} mode={view} onNotify={notify} onDirtyChange={setMapDirty} onShowMap={()=>setView(featureEnabled('map')?'map':'modules')}/></Suspense>}
-              {['map','architecture','documentation','integrations'].includes(view)&&!featureEnabled(view)&&<div className="module-empty"><h2>Этот модуль отключён</h2><p>Данные сохранены. Добавьте модуль обратно, чтобы продолжить работу.</p><button className="button secondary" onClick={()=>setView('modules')}>Модули проекта</button></div>}
+              {['map','architecture','documentation','integrations','releases'].includes(view)&&!featureEnabled(view)&&<div className="module-empty"><h2>Этот модуль отключён</h2><p>Данные сохранены. Добавьте модуль обратно, чтобы продолжить работу.</p><button className="button secondary" onClick={()=>setView('modules')}>Модули проекта</button></div>}
               {view==='modules'&&<ProjectModules key={board.project.id} project={board.project} notify={notify} onChanged={()=>void refresh(projectRef.current,true)} onDirtyChange={setMapDirty} onOpen={mode=>setView(mode as View)}/>}
               {view==='integrations'&&(featureEnabled('integrations')||mapDirty)&&<ProjectIntegrations key={board.project.id} project={board.project} notify={notify} onDirtyChange={setMapDirty}/>}
+              {view==='releases'&&(featureEnabled('releases')||mapDirty)&&<ProjectReleases key={board.project.id} project={board.project} notify={notify} onDirtyChange={setMapDirty}/>}
               {view === "board" && (
                 <>
                   {!!board.subprojects?.length && <details className="subprojects-panel">

@@ -1,8 +1,8 @@
 {
   "name": "agentboard",
   "displayName": "DashAI",
-  "description": "A local workspace for coding agents: shared tasks, searchable project maps, architecture, documentation modules, and optional Confluence/Jira sync.",
-  "version": "1.6.0",
+  "description": "A local workspace for coding agents: shared tasks, project maps, architecture, release history, documentation modules, and optional Confluence/Jira sync.",
+  "version": "1.7.0",
   "publisher": "7Askar7",
   "icon": "assets/dashai-logo-128.png",
   "galleryBanner": {

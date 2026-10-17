@@ -12,4 +12,6 @@ For architecture documentation, read `get_project_map` and the actual source in 
 
 `list_modules` and `get_project_modules` expose reusable Markdown templates and project settings. `configure_project_module` uses the current version; omitting content preserves it, an empty string clears it. Disabling a module keeps its content. Use `create_module_template` for a user-requested reusable document, not an executable plugin. External publication requires the user's configured destination and allowed scope; never infer a broader destination from a URL or a model's suggestion.
 
+For the optional `releases` module, use `list_project_releases`, `get_project_release`, `create_project_release` and `update_project_release`. Read the full record and current version before editing. A release records the user's or agent's stated version, environment, date and changes; it is not proof that deployment ran or production is healthy. Disabling the module preserves history and exports. See `docs/project-releases.md` for field limits and date rules.
+
 For large results, follow `next_offset` / `next_cursor`. Responses contain bounded previews; use detail tools and the dashboard export when full text is required. `connector_status` verifies API reachability from this MCP process. `last_seen` indicates a request, not a currently running model or a verified vendor.

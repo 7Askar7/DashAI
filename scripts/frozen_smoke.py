@@ -40,6 +40,7 @@ async def protocol_session(parameters, errlog) -> None:
                 assert json.load(response)['mcp_running'] is True
             tools = {tool.name for tool in (await session.list_tools()).tools}
             assert {"create_project", "get_board", "create_task", "log_change", "connector_status", "create_subproject", "update_subproject"} <= tools
+            assert {"list_project_releases", "get_project_release", "create_project_release", "update_project_release"} <= tools
 
             async def call(name: str, arguments: dict) -> dict:
                 result = await session.call_tool(name, arguments)
@@ -63,6 +64,28 @@ async def protocol_session(parameters, errlog) -> None:
                 'expected_version': 1, 'enabled': False, 'reason': 'Verify non-destructive disable', 'idempotency_key': 'frozen-module-off'})
             document = (await call('get_project_modules', {'project_id': project['id'], 'module_id': 'decisions'}))['module']
             assert document['content'] == 'Frozen ADR' and not document['enabled']
+            assert any(item['id'] == 'releases' and not item['enabled'] for item in modules)
+            await call('configure_project_module', {'project_id': project['id'], 'module_id': 'releases',
+                'expected_version': 0, 'enabled': True, 'reason': 'Verify bundled release history', 'idempotency_key': 'frozen-releases-on'})
+            release = await call('create_project_release', {'project_id': project['id'], 'version_name': 'smoke-1.0',
+                'changelog': 'Frozen release changes', 'reason': 'Record tested release scope', 'idempotency_key': 'frozen-release'})
+            assert release['status'] == 'draft' and release['version'] == 1
+            assert await call('get_project_release', {'project_id': project['id'], 'release_id': release['id']}) == release
+            page = await call('list_project_releases', {'project_id': project['id'], 'q': 'PRODUCTION', 'limit': 1})
+            assert page['total'] == 1 and page['releases'][0]['changelog_preview'] == release['changelog']
+            assert 'changelog' not in page['releases'][0]
+            released = await call('update_project_release', {'project_id': project['id'], 'release_id': release['id'],
+                'expected_version': 1, 'changes': {'status': 'released', 'released_at': '2026-10-17'},
+                'reason': 'Record release date', 'idempotency_key': 'frozen-release-publish'})
+            assert released['version'] == 2 and released['status'] == 'released' and released['changelog'] == release['changelog']
+            await call('configure_project_module', {'project_id': project['id'], 'module_id': 'releases',
+                'expected_version': 1, 'enabled': False, 'reason': 'Preserve hidden history', 'idempotency_key': 'frozen-releases-off'})
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/releases/{release['id']}", timeout=5) as response:
+                assert json.load(response) == released
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/export", timeout=5) as response:
+                exported = json.load(response)
+            assert exported['releases'] == [released]
+            assert any(item['action'] == 'project_release.updated' for item in exported['events'])
             with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/integrations", timeout=5) as response:
                 assert json.load(response)['integrations'] == []
             publication = await call('publish_project_map', {'project_id': project['id'], 'expected_version': 0,
@@ -192,7 +215,7 @@ def main() -> None:
             if process.poll() is None:
                 process.terminate()
             process.wait(timeout=15)
-    print("Frozen smoke passed: version, isolated data, DashAI UI/cover, project configs, real MCP nested subprojects on one board, typed tasks and legacy compatibility.")
+    print("Frozen smoke passed: version, isolated data, DashAI UI/cover, project configs, real MCP release history and export, nested subprojects on one board, typed tasks and legacy compatibility.")
 
 
 if __name__ == "__main__":

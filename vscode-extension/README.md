@@ -4,6 +4,8 @@
 
 A local project workspace for people and coding agents with stdio MCP support. Organize projects, subprojects, and tasks, explain your repository, document architecture, and track changes and decisions directly in VS Code. Give each agent a name that makes sense for your team; client configuration is independent from the model's name.
 
+**New in 1.7:** enable the optional project release-history module to record versions, production dates, environments and changes. Add your own task assignees and reuse them across projects; naming an assignee does not issue an MCP credential. If an active agent keeps an older server running after an update, the status bar shows both versions until a safe restart.
+
 **Windows 10/11 x64 or macOS Apple Silicon / Intel · VS Code 1.95+ · Russian interface.** Each platform has its own native package. Python, Node.js, and a separate desktop installation are not required. Your project database and history stay on your computer; optional integrations send only the documentation you enable to your chosen destination.
 
 ## Open your board

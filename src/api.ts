@@ -131,6 +131,23 @@ export type ProjectModule = {
   content: string;
 };
 export type Detail = { task: Task; events: Event[]; notes: Note[] };
+export type ReleaseStatus = 'draft' | 'released' | 'rolled_back';
+export type ProjectRelease = {
+  id: string;
+  project_id: string;
+  version_name: string;
+  title: string;
+  status: ReleaseStatus;
+  environment: string;
+  released_at: string | null;
+  changelog: string;
+  link: string;
+  source_revision: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+export type ReleaseSummary = Omit<ProjectRelease, 'changelog'> & {changelog_preview: string};
 export type Bootstrap = {
   projects: Project[];
   agents: Agent[];
@@ -181,6 +198,8 @@ export const actionLabels: Record<string, string> = {
   "note.created": "добавил запись",
   "change.logged": "записал правку",
   "agent.created": "добавил агента",
+  "project_release.created": "добавил версию проекта",
+  "project_release.updated": "изменил запись о версии",
   "project_map.published": "опубликовал карту проекта",
   "project_map.document_updated": "сохранил состав документации",
   "project_map.reviewed": "проверил описание или схему",
