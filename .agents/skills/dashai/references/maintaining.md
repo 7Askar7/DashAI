@@ -13,4 +13,6 @@ Start with `AGENTS.md`, `docs/architecture.md`, the relevant `docs/research/` fi
 
 Trace the affected UI → HTTP → domain → audit flow before editing. Reuse existing validation and stdlib facilities. Do not add a model runner, a second store, or speculative runtime dependencies. Agent identities can be assigned to tasks like the built-in identities, but only a human can issue credentials.
 
+Keep shared navigation and form styles in `src/styles.css`. A lazily loaded feature stylesheet must not override the project shell after a user visits that feature.
+
 Use the README's current commands. Focused checks include `python -m pytest tests/test_mcp.py -q` for the real stdio workflow and `npm run build` for production UI typing/build. A source test does not establish that a packaged native executable or an external service worked. Record the actual checks and material limitations. Only commit tracked source and deliberate documentation; exclude `data/`, local configs, tokens, and test profiles.

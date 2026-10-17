@@ -171,7 +171,7 @@ async def check_ui(directory: Path, port: int, environment: dict):
                     await tool("log_change", {"task_id": task["id"], "summary": "Real MCP call from frozen companion",
                         "files": ["scripts/vscode_smoke.py"], "verification": "Task appeared in VSCode webview",
                         "reason": "Record check", "idempotency_key": "vscode-change"})
-                    await tool("publish_project_map", {"project_id": project["id"], "expected_version": 0,
+                    await tool("publish_project_map", {"project_id": project["id"], "expected_version": 0, "idempotency_key": str(uuid4()),
                         "source_revision": "isolated-vsix-qa", "reason": "Verify bundled map through MCP",
                         "files": [{"path": "src/App.tsx", "sha256": "1" * 64,
                             "description": {"title": "VSIX project map", "summary": "Published through frozen MCP",
@@ -211,7 +211,7 @@ async def check_ui(directory: Path, port: int, environment: dict):
                 await asyncio.sleep(.1)
             assert exported.is_file(), "Documentation host bridge writes " + suffix
             text = exported.read_text(encoding="utf-8")
-            assert "VSIX project map" in text and "VSIX flow" in text
+            assert all(value in text for value in ("src/App.tsx", "Published through frozen MCP", "VSIX flow"))
             assert ("<svg" in text and "<script" not in text) if suffix == "html" else "```mermaid" in text
         await evaluate("(() => { const input=Array.from(document.querySelectorAll('.map-settings label')).find(label=>label.textContent.includes('Причина сохранения')).querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Verify persistent VSIX composition'); input.dispatchEvent(new Event('input',{bubbles:true})); })()")
         await click("Сохранить состав")

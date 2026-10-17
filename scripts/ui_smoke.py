@@ -400,9 +400,15 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 for width in (1440,390,320):
                     page.set_viewport_size({'width':width,'height':1000 if width==1440 else 844})
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Module reflow {width}'
+                    assert page.locator('.module-search input').evaluate("node=>getComputedStyle(node).backgroundColor")=='rgb(13, 21, 32)'
+                    if width<700:
+                        tops=page.locator('.tabs-nav>button').evaluate_all('nodes=>nodes.map(node=>node.getBoundingClientRect().top)')
+                        assert max(tops)-min(tops)<1, f'Project tabs wrap at {width}: {tops}'
+                        assert page.locator('.module-search input').evaluate("node=>getComputedStyle(node).fontSize")=='16px'
                     page.screenshot(path=str(ARTIFACTS/f'workspace-modules-{width}.png'),full_page=True)
                     page.locator('.project-tabs').get_by_role('button',name='Интеграции',exact=True).click()
                     expect(page.locator('.integration-row')).to_have_count(2)
+                    assert page.locator('.integration-form input[type=password]').first.evaluate("node=>getComputedStyle(node).backgroundColor")=='rgb(13, 21, 32)'
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Integration reflow {width}'
                     page.screenshot(path=str(ARTIFACTS/f'workspace-integrations-{width}.png'),full_page=True)
                     page.locator('.project-tabs').get_by_role('button',name='Модули',exact=True).click()
