@@ -217,6 +217,48 @@ def test_export_pagination_append_only_and_token_isolation(workspace):
     assert client.get("/api/bootstrap", headers={"Authorization": "Bearer wrong"}).status_code == 401
 
 
+def test_history_latest_first_pages_preserve_delta_sync(workspace):
+    _app, client, agents = workspace
+    assert client.get("/api/history?order=desc").json() == {"events": [], "next_cursor": 0}
+    project, section = project_and_section(client)
+    item = task(client, project, section)
+    task(client, project, section, title="Другая задача")
+    for index in range(105):
+        post(client, f"/api/tasks/{item['id']}/notes", {"kind": "progress", "body": f"Шаг {index}"}, agents["codex"])
+    other_project, other_section = project_and_section(client)
+    foreign = task(client, other_project, other_section)
+    snapshot = client.get(f"/api/projects/{project['id']}/export").json()["events"]
+    params = {"project_id": project["id"], "order": "desc", "limit": 100}
+    first = client.get("/api/history", params=params).json()
+    assert len(first["events"]) == 100
+    assert first["events"] == list(reversed(snapshot))[:100]
+    assert first["next_cursor"] == first["events"][-1]["id"]
+    assert client.get("/api/history?order=desc&limit=1").json()["events"][0]["task_id"] == foreign["id"]
+
+    # A new event between pages must not shift the older page or hide delta updates.
+    post(client, f"/api/tasks/{item['id']}/notes", {"kind": "progress", "body": "Новое событие между страницами"})
+    second = client.get("/api/history", params={**params, "before": first["next_cursor"]}).json()
+    combined = first["events"] + second["events"]
+    assert combined == list(reversed(snapshot))
+    assert len({event["id"] for event in combined}) == len(combined)
+    empty = client.get("/api/history", params={**params, "before": second["next_cursor"]}).json()
+    assert empty == {"events": [], "next_cursor": second["next_cursor"]}
+    delta = client.get("/api/history", params={"project_id": project["id"], "after": first["events"][0]["id"]}).json()
+    assert len(delta["events"]) == 1 and delta["events"][0]["task_id"] == item["id"]
+    ascending = client.get("/api/history", params={"project_id": project["id"], "limit": 500}).json()
+    assert ascending["events"] == snapshot + delta["events"]
+    assert ascending["next_cursor"] == delta["next_cursor"]
+    assert client.get("/api/history", params={"after": delta["next_cursor"]}).json() == {"events": [], "next_cursor": delta["next_cursor"]}
+
+    filtered = client.get("/api/history", params={**params, "task_id": item["id"], "limit": 500}).json()
+    assert filtered["events"] == [event for event in reversed(ascending["events"]) if event["task_id"] == item["id"]]
+    assert client.get("/api/history", params={"order": "desc", "task_id": item["id"], "limit": 500}).json() == filtered
+    assert client.get("/api/history", params={**params, "task_id": foreign["id"]}).status_code == 422
+    for invalid in ["before=1", "order=asc&before=1", "order=desc&after=1", "order=desc&before=0", "order=desc&before=-1", "order=invalid"]:
+        response = client.get("/api/history?" + invalid)
+        assert response.status_code == 422 and isinstance(response.json()["detail"], str)
+
+
 def test_loopback_origin_and_write_authentication(workspace):
     _app, client, _agents = workspace
     assert client.post("/api/projects", json={"name": "Unauthenticated", "reason": REASON}).status_code == 401

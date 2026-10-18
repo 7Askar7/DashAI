@@ -16,6 +16,8 @@ type Props = {
   tasks: Task[];
   agents: Agent[];
   subprojects?: Subproject[];
+  statusFilter?: Status | "";
+  filterKey?: string;
   onOpen: (id: string) => void;
   onMove: (task: Task, status: Status) => void;
 };
@@ -24,6 +26,8 @@ export default function KanbanBoard({
   tasks,
   agents,
   subprojects = [],
+  statusFilter = "",
+  filterKey = "",
   onOpen,
   onMove,
 }: Props) {
@@ -33,6 +37,13 @@ export default function KanbanBoard({
   const [dropStatus, setDropStatus] = useState<Status | null>(null);
   const draggedTask = useRef<string | null>(null);
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]));
+  const visibleStatuses = statusFilter ? statuses.filter(status => status.value === statusFilter) : statuses;
+
+  // A new search must reveal a matching column on mobile, even when it was hidden.
+  // Polling alone must not change the user's chosen column.
+  useEffect(() => {
+    setActiveStatus(current => statusFilter || (tasks.some(task => task.status === current) ? current : tasks[0]?.status || "backlog"));
+  }, [filterKey, statusFilter]);
 
   function finishDrag() {
     draggedTask.current = null;
@@ -62,7 +73,7 @@ export default function KanbanBoard({
 
   return (
     <div className="kanban-workspace">
-      <nav className="kanban-status-nav" aria-label="Статус задач">
+      <nav className="kanban-status-nav" aria-label="Статус задач" hidden={!!statusFilter}>
         {statuses.map((status) => (
           <button
             type="button"
@@ -83,8 +94,8 @@ export default function KanbanBoard({
         tabIndex={0}
         aria-label="Канбан-доска по статусам"
       >
-        <div className="kanban-columns">
-          {statuses.map((status) => {
+        <div className={`kanban-columns${statusFilter ? " is-filtered" : ""}`}>
+          {visibleStatuses.map((status) => {
             const columnTasks = tasks.filter(
               (task) => task.status === status.value,
             );
@@ -233,10 +244,7 @@ export default function KanbanBoard({
                   })}
                   {columnTasks.length === 0 && (
                     <div className="kanban-empty">
-                      <span>Пока нет задач</span>
-                      <small className="kanban-drop-hint">
-                        Перетащите карточку в эту колонку
-                      </small>
+                      <span>{{backlog: "Очередь свободна", in_progress: "Нет задач в работе", review: "Нет задач на проверке", done: "Здесь будут завершённые задачи", blocked: "Нет заблокированных задач"}[status.value]}</span>
                     </div>
                   )}
                 </div>

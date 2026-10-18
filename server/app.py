@@ -637,8 +637,15 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
         return add_note(task_id, body, who, session(request), "change", body.summary, metadata, "changes")
 
     @app.get("/api/history", dependencies=[Depends(authenticated_read)])
-    def history(project_id: str | None = None, task_id: str | None = None, after: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500)):
+    def history(project_id: str | None = None, task_id: str | None = None, after: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500), order: Literal["asc", "desc"] = "asc", before: int | None = Query(default=None, ge=1)):
+        if before is not None and order != "desc":
+            raise HTTPException(422, "Параметр before доступен только для order=desc")
+        if after and order == "desc":
+            raise HTTPException(422, "Параметр after доступен только для order=asc")
         where, args = ["id>?"], [after]
+        if before is not None:
+            where.append("id<?")
+            args.append(before)
         with store.connect() as db:
             if project_id:
                 store.entity(db, "projects", project_id)
@@ -650,8 +657,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
                     raise HTTPException(422, "Задача не принадлежит указанному проекту")
                 where.append("task_id=?")
                 args.append(task_id)
-            events = [store.event(row) for row in db.execute("SELECT * FROM events WHERE " + " AND ".join(where) + " ORDER BY id LIMIT ?", (*args, limit))]
-            return {"events": events, "next_cursor": events[-1]["id"] if events else after}
+            events = [store.event(row) for row in db.execute("SELECT * FROM events WHERE " + " AND ".join(where) + f" ORDER BY id {order} LIMIT ?", (*args, limit))]
+            return {"events": events, "next_cursor": events[-1]["id"] if events else before or after}
 
     @app.get("/api/projects/{project_id}/export", dependencies=[Depends(authenticated_read)])
     def export(project_id: str):

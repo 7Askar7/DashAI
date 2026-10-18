@@ -137,6 +137,33 @@ function boardHtml(runtime) {
     </script></body></html>`;
 }
 
+async function workspaceRequest(storage, action, serialized) {
+  const key = 'dashai.workspace.v1', maxBytes = 100 * 1024;
+  if (!['load_workspace', 'save_workspace'].includes(action)) throw new Error('Некорректная команда состояния пространства.');
+  if (action === 'save_workspace' && (typeof serialized !== 'string' || Buffer.byteLength(serialized, 'utf8') > maxBytes)) {
+    throw new Error('Состояние пространства должно быть JSON размером до 100 КБ.');
+  }
+  const state = action === 'load_workspace' ? storage.get(key, null) : JSON.parse(serialized);
+  if (state == null && action === 'load_workspace') return null;
+  const object = value => value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+  const keys = (value, names) => object(value) && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name));
+  const id = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
+  const strings = ['view', 'query', 'taskTypeFilter', 'subprojectFilter', 'agentFilter', 'statusFilter', 'priorityFilter'];
+  if (!keys(state, ['version', 'projectId', 'view', 'taskId', 'projects']) || state.version !== 1 ||
+      !(state.projectId === null || id(state.projectId)) || !(state.taskId === null || id(state.taskId)) ||
+      typeof state.view !== 'string' || state.view.length > 100 || !object(state.projects) ||
+      Buffer.byteLength(JSON.stringify(state), 'utf8') > maxBytes ||
+      Object.entries(state.projects).some(([projectId, preferences]) => !id(projectId) ||
+        !keys(preferences, [...strings, 'listView', 'filtersOpen']) ||
+        strings.some(name => typeof preferences[name] !== 'string' || preferences[name].length > 2000) ||
+        typeof preferences.listView !== 'boolean' || typeof preferences.filtersOpen !== 'boolean')) {
+    throw new Error('Некорректное состояние пространства.');
+  }
+  if (action === 'load_workspace') return state;
+  await storage.update(key, state);
+  return true;
+}
+
 function activate(context) {
   const vscode = require('vscode');
   const version = context.extension.packageJSON.version;
@@ -197,7 +224,9 @@ function activate(context) {
     if (message?.kind !== 'agentboard-host' || typeof message.id !== 'string' || message.id.length > 100) return;
     let result, error;
     try {
-      if (message.action === 'clipboard' && typeof message.text === 'string' && message.text.length <= 200000) {
+      if (message.action === 'load_workspace' || message.action === 'save_workspace') {
+        result = await workspaceRequest(context.globalState, message.action, message.state);
+      } else if (message.action === 'clipboard' && typeof message.text === 'string' && message.text.length <= 200000) {
         await vscode.env.clipboard.writeText(message.text);
         result = true;
       } else if (message.action === 'save_document' && /^dashai-(documentation|diagram|map)\.(md|html|mmd|json)$/.test(message.filename || '') && typeof message.content === 'string' && Buffer.byteLength(message.content, 'utf8') <= 6000000) {
@@ -289,4 +318,4 @@ function activate(context) {
 }
 
 function deactivate() { clearInterval(heartbeat); heartbeat = undefined; }
-module.exports = { activate, deactivate, parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, runtimeStatus, binaryName, personalDataDir };
+module.exports = { activate, deactivate, parseRuntime, discover, copyRuntime, boardHtml, workspaceRequest, requestJson, needsRuntimeUpgrade, runtimeStatus, binaryName, personalDataDir };

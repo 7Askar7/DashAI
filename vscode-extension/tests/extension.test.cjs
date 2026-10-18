@@ -7,7 +7,7 @@ const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const vm = require('node:vm');
-const { parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade, runtimeStatus, binaryName, personalDataDir } = require('../extension.cjs');
+const { parseRuntime, discover, copyRuntime, boardHtml, workspaceRequest, requestJson, needsRuntimeUpgrade, runtimeStatus, binaryName, personalDataDir } = require('../extension.cjs');
 
 test('macOS uses native binary names and Application Support; Windows retains its existing location', () => {
   assert.equal(binaryName('AgentboardMCP', 'darwin'), 'AgentboardMCP');
@@ -121,6 +121,44 @@ test('Webview bridge accepts the preload reply when VS Code masks window.parent'
   window.receive({ source: child, origin, data: reply });
   window.receive({ source: {}, origin: 'https://example.com', data: reply });
   assert.deepEqual(replies, [[reply, origin]]);
+});
+
+test('Workspace preferences use one durable key and reject malformed or oversized state without overwriting it', async () => {
+  const key = 'dashai.workspace.v1', values = new Map();
+  const storage = {
+    get: (name, fallback) => values.has(name) ? values.get(name) : fallback,
+    update: async (name, value) => { values.set(name, value); },
+  };
+  const projectId = crypto.randomUUID();
+  const preferences = { view: 'board', query: 'Проверка', taskTypeFilter: 'development', subprojectFilter: '',
+    agentFilter: 'codex', statusFilter: 'review', priorityFilter: '', listView: true, filtersOpen: false };
+  const state = { version: 1, projectId, view: 'board', taskId: crypto.randomUUID(), projects: { [projectId]: preferences } };
+  const save = value => workspaceRequest(storage, 'save_workspace', JSON.stringify(value));
+  assert.equal(await workspaceRequest(storage, 'load_workspace'), null);
+  assert.equal(await save(state), true);
+  assert.deepEqual(await workspaceRequest(storage, 'load_workspace'), state);
+  assert.deepEqual([...values.keys()], [key]);
+
+  for (const invalid of [null, [], { ...state, version: 2 }, { ...state, token: 'not a preference' },
+    { ...state, projectId: '../../other-store' }, { ...state, taskId: 'AD-001' }, { ...state, view: null },
+    { ...state, projects: [] }, { ...state, projects: { constructor: preferences } },
+    ...[{ ...preferences, credentials: {} }, { ...preferences, listView: 'true' },
+      { ...preferences, query: {} }, { ...preferences, query: 'x'.repeat(2001) }]
+      .map(value => ({ ...state, projects: { [projectId]: value } }))]) {
+    await assert.rejects(save(invalid));
+    assert.deepEqual(values.get(key), state);
+  }
+  for (const raw of [undefined, '{}', '{broken']) await assert.rejects(workspaceRequest(storage, 'save_workspace', raw));
+  await assert.rejects(workspaceRequest(storage, 'save_workspace', ' '.repeat(102401)), /100 КБ/);
+  await assert.rejects(workspaceRequest(storage, 'save_workspace', 'я'.repeat(60000)), /100 КБ/);
+  await assert.rejects(workspaceRequest(storage, 'other_action', JSON.stringify(state)));
+  assert.deepEqual(values.get(key), state);
+  values.set(key, { ...state, version: 2 });
+  await assert.rejects(workspaceRequest(storage, 'load_workspace'));
+  const empty = { version: 1, projectId: null, view: 'overview', taskId: null, projects: {} };
+  assert.equal(await save(empty), true);
+  assert.deepEqual(await workspaceRequest(storage, 'load_workspace'), empty);
+  await assert.rejects(workspaceRequest({ ...storage, update: async () => { throw new Error('Storage unavailable'); } }, 'save_workspace', JSON.stringify(state)), /Storage unavailable/);
 });
 
 test('Local JSON transport rejects redirects and oversized responses', async () => {

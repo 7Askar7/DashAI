@@ -1,0 +1,90 @@
+.draft-fields {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.task-review {
+  margin: 22px 0 26px;
+  padding: 18px 0;
+  border-block: 1px solid var(--border);
+}
+
+.task-review h4 {
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+
+.task-readiness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+
+.task-readiness li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.task-readiness svg {
+  margin-top: 2px;
+}
+
+.task-readiness-waiting {
+  color: var(--red);
+}
+
+.latest-evidence,
+.task-review-hint {
+  margin-top: 15px;
+}
+
+.latest-evidence-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.latest-evidence-author,
+.latest-evidence > .muted,
+.task-review-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latest-evidence-author {
+  margin-top: 10px;
+}
+
+.task-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 12px;
+}
+
+.task-review-actions button {
+  min-height: 36px;
+}
+
+@media (max-width: 700px) {
+  .task-review-actions button {
+    min-height: 44px;
+  }
+  .latest-evidence-body {
+    font-size: 16px;
+  }
+}

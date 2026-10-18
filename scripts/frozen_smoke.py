@@ -138,6 +138,18 @@ async def protocol_session(parameters, errlog) -> None:
             history = await call("get_history", {"project_id": project["id"]})
             assert sum(item["action"] == "subproject.created" for item in history["events"]) == 3
             assert any(item["action"] == "subproject.updated" for item in history["events"])
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/export", timeout=5) as response:
+                events = json.load(response)['events']
+            assert len(events) > 4
+            for query, expected in (
+                ('order=desc', events[-2:][::-1]),
+                (f"order=desc&before={events[-2]['id']}", events[-4:-2][::-1]),
+                ('', events[:2]),
+                (f"after={events[1]['id']}", events[2:4]),
+            ):
+                with opener.open(runtime['base_url'] + f"/api/history?project_id={project['id']}&limit=2&{query}", timeout=5) as response:
+                    page = json.load(response)
+                assert page == {'events': expected, 'next_cursor': expected[-1]['id']}, f"Frozen history pagination: {query}"
             section = await call("create_section", {"project_id": project["id"], "title": "Legacy compatibility",
                                                       "reason": "Verify existing clients", "idempotency_key": "frozen-section"})
             legacy = await call("create_task", {"project_id": project["id"], "section_id": section["id"],
@@ -215,7 +227,7 @@ def main() -> None:
             if process.poll() is None:
                 process.terminate()
             process.wait(timeout=15)
-    print("Frozen smoke passed: version, isolated data, DashAI UI/cover, project configs, real MCP release history and export, nested subprojects on one board, typed tasks and legacy compatibility.")
+    print("Frozen smoke passed: version, isolated data, DashAI UI/cover, project configs, real MCP release history and export, latest-first HTTP history with legacy delta sync, nested subprojects on one board, typed tasks and legacy compatibility.")
 
 
 if __name__ == "__main__":
