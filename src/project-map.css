@@ -1,0 +1,39 @@
+.project-map{margin-top:24px;min-width:0}.project-map h2{font-size:22px;margin:0 0 12px}.project-map h3{margin:26px 0 12px}.project-map p,.project-map li{overflow-wrap:anywhere;white-space:pre-wrap;line-height:1.8}.map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}.map-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.map-truth{font-size:12px;color:var(--muted);max-width:95ch}.map-version{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0}.map-version label{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.map-version input{width:75px}.project-map input,.project-map textarea,.project-map select{color:var(--text,#e9edf2);background:var(--surface);border:1px solid #4a5a6b;border-radius:6px;padding:9px 10px;font:inherit;min-width:0;max-width:100%}.project-map label{font-size:13px}.project-map label:has(textarea),.map-settings>label,.map-import>label,.map-review label{display:flex;flex-direction:column;gap:8px;margin:14px 0}/* The explorer and reading pane scroll independently; long repositories do not stretch the page. */
+.map-workspace{--map-workspace-height:clamp(520px,72dvh,820px);display:grid;grid-template-columns:minmax(285px,32%) minmax(0,1fr);border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--panel);height:var(--map-workspace-height);min-width:0}
+.map-workspace>aside{border-right:1px solid var(--border);padding:16px 12px 0;background:#10161d;display:flex;flex-direction:column;min-width:0;min-height:0}
+.map-search{display:flex;align-items:center;gap:7px;flex:none}
+.map-search>svg{flex:none;color:var(--muted)}
+.map-search input{width:100%;font-size:12px;min-height:40px}
+.map-search button,.map-tree-toolbar button{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:5px;color:var(--muted)}
+.map-search button:hover,.map-tree-toolbar button:not(:disabled):hover{background:var(--surface);color:var(--text)}
+.map-mobile-tree{display:block;min-height:0;flex:1;overflow:hidden}
+.map-mobile-tree>summary{cursor:pointer;margin:14px 0 8px;font-size:12px;min-height:28px;color:var(--text)}
+.map-explorer{display:flex;flex-direction:column;min-height:0}
+.map-tree-toolbar{display:flex;align-items:center;justify-content:space-between;gap:6px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.map-tree-toolbar>div{display:flex;gap:2px}
+.map-tree-help{font-size:11px;color:var(--muted);margin:3px 0 10px;line-height:1.6!important}
+.map-tree{--map-tree-max-height:calc(var(--map-workspace-height) - 180px);position:relative;flex:none;min-height:48px;overflow:auto;overscroll-behavior:contain;font-size:12px;scrollbar-gutter:stable;scrollbar-color:var(--border) transparent}
+.map-tree-spacer{position:relative;min-width:0}
+.map-tree .map-tree-row{position:absolute;left:0;right:0;display:flex;align-items:center;gap:7px;width:100%;height:48px;min-height:48px;padding:6px 8px;text-align:left;border-radius:5px;color:var(--text);overflow:hidden}
+.map-tree-row>svg{flex:none;color:var(--muted)}
+.map-tree-row:hover{background:var(--surface)}
+.map-tree-row[aria-selected=true]{background:#24332b;color:var(--accent)}
+.map-tree-row[aria-selected=true]>svg{color:var(--accent)}
+.map-tree:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:5px}
+.map-tree:focus .map-tree-row.is-active{outline:1px solid var(--accent);outline-offset:-2px}
+.map-tree-label{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.map-tree-label>span,.map-tree-label>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.map-tree-label>small{font-size:10px;color:var(--muted)}
+.map-tree-count{margin-left:auto;color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}
+.map-tree-chevron.is-open{transform:rotate(90deg)}
+.map-tree-chevron.is-hidden{visibility:hidden}
+.map-tree-empty{padding:24px 8px;color:var(--muted);font-size:12px}
+.map-tree-empty strong{color:var(--text)}
+.map-tree-empty .button{margin-top:8px}
+.map-search button:focus-visible,.map-tree-toolbar button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.map-workspace>.map-file-article{overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.map-file-article>div>p:not(.map-meta):not(.map-path),.map-file-article ol{max-width:75ch}
+.map-file-article{padding:30px;min-width:0}.map-file-article h2{outline-offset:5px}.map-file-article pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.map-path{font:12px Consolas,monospace;color:var(--muted);overflow-wrap:anywhere}.map-meta{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}.map-warning{color:#efc783!important;font-size:12px}.map-lead{font-size:16px;color:#d3dce6}.map-related{display:flex;flex-wrap:wrap;gap:8px}.map-related button{white-space:normal;overflow-wrap:anywhere;max-width:100%}.map-review{margin-top:24px;border-top:1px solid var(--border);padding-top:12px}.map-notation{display:flex;flex-direction:column;gap:8px;max-width:100%;margin:16px 0}.map-notation select{max-width:700px}.map-diagram iframe{width:100%;height:480px;background:#11171f;border:1px solid var(--border);border-radius:8px}.map-diagram>p{font-size:12px}.map-import{margin-top:24px;border-top:1px solid var(--border);padding-top:16px}.map-import summary{cursor:pointer;min-height:36px}.map-import>p{color:var(--muted);font-size:12px}.map-import textarea{width:100%;font:12px Consolas,monospace}
+@media(max-width:1100px){.map-workspace{grid-template-columns:250px minmax(0,1fr)}.map-file-article{padding:24px}}
+@media(max-width:800px){.map-workspace{display:block;height:auto}.map-workspace>aside{border-right:0;border-bottom:1px solid var(--border);padding-bottom:12px}.map-mobile-tree{display:block}.map-explorer{height:auto}.map-tree{--map-tree-max-height:280px;min-height:48px}.map-search button,.map-tree-toolbar button{width:40px;height:40px}.map-workspace>.map-file-article{overflow:visible;max-height:none}
+.map-file-article{padding:20px}.map-diagram iframe{height:400px}.map-actions .button{white-space:normal;min-height:42px}.map-toolbar>div{min-width:0}.map-related button{font-size:12px}}

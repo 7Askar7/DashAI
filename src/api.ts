@@ -12,7 +12,7 @@ export const taskTypes: Record<TaskType, string> = {
 export type Agent = {
   id: string;
   name: string;
-  kind: "human" | "codex" | "claude";
+  kind: "human" | "codex" | "claude" | "custom";
   last_seen: string | null;
   created_at: string;
 };
@@ -117,8 +117,37 @@ export type Board = {
   subprojects: Subproject[];
   tasks: Task[];
   activity: Event[];
+  modules?: Pick<ProjectModule, 'id' | 'name' | 'kind' | 'enabled' | 'version'>[];
+};
+export type ProjectModule = {
+  id: string;
+  name: string;
+  description: string;
+  kind: 'feature' | 'document';
+  default_enabled: boolean;
+  template?: string;
+  enabled: boolean;
+  version: number;
+  content: string;
 };
 export type Detail = { task: Task; events: Event[]; notes: Note[] };
+export type ReleaseStatus = 'draft' | 'released' | 'rolled_back';
+export type ProjectRelease = {
+  id: string;
+  project_id: string;
+  version_name: string;
+  title: string;
+  status: ReleaseStatus;
+  environment: string;
+  released_at: string | null;
+  changelog: string;
+  link: string;
+  source_revision: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+export type ReleaseSummary = Omit<ProjectRelease, 'changelog'> & {changelog_preview: string};
 export type Bootstrap = {
   projects: Project[];
   agents: Agent[];
@@ -132,6 +161,7 @@ export type Connectors = {
   data_dir: string;
   desktop: boolean;
   agents: Agent[];
+  client_profiles: {id:string;label:string;filename:string;format:string;scope:string}[];
 };
 
 export const statuses: { value: Status; label: string; color: string }[] = [
@@ -168,6 +198,11 @@ export const actionLabels: Record<string, string> = {
   "note.created": "добавил запись",
   "change.logged": "записал правку",
   "agent.created": "добавил агента",
+  "project_release.created": "добавил версию проекта",
+  "project_release.updated": "изменил запись о версии",
+  "project_map.published": "опубликовал карту проекта",
+  "project_map.document_updated": "сохранил состав документации",
+  "project_map.reviewed": "проверил описание или схему",
 };
 
 export class ApiError extends Error {

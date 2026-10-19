@@ -1,0 +1,21 @@
+.assignee-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+}
+.assignee-create {
+  display: grid;
+  gap: 8px;
+}
+.assignee-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+@media (max-width: 700px) {
+  .form-row:has(> .assignee-select) {
+    grid-template-columns: 1fr;
+  }
+}

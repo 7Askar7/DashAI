@@ -1,6 +1,45 @@
-# Подключение Codex и Claude Code
+# Подключение coding agents через MCP
 
-Оба клиента работают с одной доской через **локальный MCP server**. Коннектор предоставляет инструменты работы с проектами, задачами и журналом; он обращается к общему HTTP API и не открывает SQLite. Dashboard не запускает модели и не требует ключей OpenAI или Anthropic.
+Любой клиент с поддержкой **локального stdio MCP** может работать с общей доской, картой проекта, архитектурой и документацией. Коннектор обращается к общему HTTP API и не открывает SQLite. DashAI не запускает модели и не требует API-ключей их поставщиков.
+
+Модуль **«Версии проекта»** добавляет общий журнал релизов. Включите `releases` через `configure_project_module`, затем используйте `list_project_releases`, `get_project_release`, `create_project_release`, `update_project_release`. Для правки нужна текущая версия записи. Указание «выпущена» фиксирует сообщение автора о релизе и не доказывает фактический deploy. [Поля и ограничения](project-releases.md).
+
+Имя исполнителя можно также добавить прямо при назначении задачи: оно сохраняется для всех проектов без выдачи MCP-токена (`POST /api/agents`, `issue_token:false`). Для доступа клиента к API человек отдельно выдаёт credential через «Коннекторы».
+
+Имя автора, тип идентичности и формат клиента независимы. Например, автор «Qwen Architecture Reviewer» с `kind: custom` может работать через Cursor; тот же MCP-клиент может использовать другую модель. DashAI сохраняет указанное человеком имя и автора credential, но не подтверждает производителя модели.
+
+## Выбор клиента и произвольное имя
+
+На экране «Коннекторы» создайте отдельного автора, скачайте выданный JSON токена в личную папку вне Git и выберите формат клиента. Для собственной модели укажите любое понятное имя. Известные варианты Codex / Claude Code сохраняются для совместимости; `custom` подходит любому другому клиенту или названию модели. Файл токена выдается один раз, его значение не вставляется в MCP-конфигурацию.
+
+| Профиль `--client` | Файл / формат | Действие setup |
+| --- | --- | --- |
+| `codex` | `.codex/config.toml`, `[mcp_servers.agentboard]` | Обновляет только этот сервер проекта |
+| `claude` | `.mcp.json`, `mcpServers.agentboard` | Обновляет только этот сервер проекта |
+| `cursor` | `.cursor/mcp.json`, `mcpServers.agentboard` | Обновляет только этот сервер проекта |
+| `vscode` | `.vscode/mcp.json`, `servers.agentboard` | Совместимый формат VS Code / Copilot |
+| `cline` | `cline_mcp_settings.json`, `mcpServers.agentboard` | Экспортирует в `.dashai/`; вручную объедините через настройки MCP в Cline |
+| `generic` | `mcp-server.json`, объект `command` + `args` | Экспортирует в `.dashai/`; вставьте сервер в формат своего клиента |
+
+Актуальная документация VS Code также рекомендует переносимую `.mcp.json` с `mcpServers` для Copilot harness; для нее подходит JSON профиля `claude`. Профиль `vscode` сохраняет совместимость с `.vscode/mcp.json`. Профили не устанавливают модели и не меняют глобальные пользовательские настройки. Существующие JSON/TOML настройки и другие серверы сохраняются; JSON с комментариями, некорректный или неоднозначный файл не перезаписывается.
+
+Пример из исходников — создать собственную идентичность и конфигурацию Cursor:
+
+```powershell
+.venv/Scripts/python.exe connectors/setup.py --project-root C:/path/to/project --client cursor --agent custom --agent-name "Qwen Architecture Reviewer"
+```
+
+Повторно использовать уже выданный JSON без выпуска нового токена:
+
+```powershell
+.venv/Scripts/python.exe connectors/setup.py --project-root C:/path/to/project --client vscode --agent custom --agent-id "UUID-из-поля-agent.id" --token-file C:/private/dashai-reviewer.json
+```
+
+Для установленного приложения те же аргументы передаются после `AgentboardMCP --setup-connectors` (`AgentboardMCP.exe` на Windows). На Mac личные данные находятся в `~/Library/Application Support/Agentboard`; конкретный стабильный companion и пути показывает экран «Коннекторы». Отдельный Python/Node для установленного MCP не нужен.
+
+**Реальное подключение:** перезапустите MCP в клиенте, найдите инструменты `agentboard` и вызовите `list_projects`, затем `connector_status`. Сохраненный конфиг, выбранный клиент и имя модели этого не доказывают. `last_seen` — время последнего авторизованного запроса, а не текущий статус модели.
+
+Источник форматов, проверено 17 октября 2026: [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Code](https://code.claude.com/docs/en/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [VS Code / Copilot](https://code.visualstudio.com/docs/agent-customization/mcp-servers), [Cline](https://docs.cline.bot/mcp/mcp-overview).
 
 ## Установленная Windows версия
 
@@ -58,14 +97,16 @@ Python и Node для работы самого установленного Age
 
 ## Отдельные экземпляры агентов
 
-Стандартные credentials отделяют Codex от Claude Code. Когда два экземпляра одного клиента работают одновременно, каждому лучше дать собственную идентичность:
+Стандартные credentials Codex и Claude Code продолжают работать. Когда два экземпляра любого клиента работают одновременно, каждому лучше дать собственную идентичность. Для прежней настройки двух известных клиентов:
 
 ```powershell
 .venv/Scripts/python.exe connectors/setup.py --project-root C:/path/to/codex-worktree --agent codex --agent-name "Codex Backend"
 .venv/Scripts/python.exe connectors/setup.py --project-root C:/path/to/claude-worktree --agent claude --agent-name "Claude Reviewer"
 ```
 
-Setup вызывает локальный `POST /api/agents`, сохраняет одноразово выданный token рядом с credentials и добавляет `--token-file` только в профиль выбранного клиента. Другой клиент в этом проекте продолжает использовать свою стандартную идентичность. Повторная команда с `--agent-name` выпускает **новую** идентичность; обычный setup снова задает стандартные профили.
+Setup вызывает локальный `POST /api/agents`, сохраняет одноразово выданный JSON токена рядом с credentials и добавляет `--token-file` только в выбранный профиль. В прежнем режиме `--client both` другой клиент продолжает использовать стандартную идентичность. Повторная команда с `--agent-name` выпускает **новую** идентичность; для повторного использования задайте `--client`, `--agent-id` и `--token-file`. Обычный setup без этих параметров сохраняет прежнее поведение настройки Codex и Claude Code.
+
+`POST /api/agents` принимает `{name, kind?: "custom" | "codex" | "claude", reason}`; по умолчанию `custom`. Выпуск credentials разрешен только человеку; агент через MCP не может выпустить новый token. `GET /api/connectors` возвращает доступные `client_profiles`, а `POST /api/connectors/config` принимает `{client, agent_id, token_file?}` и возвращает `{filename, format, content}`. Это генератор без записи файлов: для отдельного UUID требуется абсолютный путь к JSON/файлу токена, содержимое файла сервер не читает. Стандартные IDs `codex` / `claude` могут использовать прежние credentials. Конфигурация не содержит значение токена.
 
 Новый экземпляр можно также создать на экране «Коннекторы» и скачать JSON с `token` и `agent`. Такой файл совместим с `--token-file`; поддерживается и простой UTF-8 файл с token. Отдельный session ID (`--session-id` или `AGENTBOARD_SESSION_ID`) добавляет корреляцию к событиям, но права и actor всегда определяет credential на сервере. Без explicit session ID коннектор создает UUID на время своего процесса.
 
@@ -89,6 +130,14 @@ Setup вызывает локальный `POST /api/agents`, сохраняет
 | `log_change` | История кодовой правки: summary, files, reason, diff/commit, verification |
 | `get_history` | События по возрастанию ID с cursor для продолжения |
 | `connector_status` | Reachability общего API и конфигурация этого connector без секретов |
+| `get_project_map` | Файлы, описания и архитектурные диаграммы текущей или прежней ревизии |
+| `publish_project_map` | Опубликовать полный разрешенный манифест, descriptions и диаграммы через общий API |
+| `list_modules` | Каталог встроенных и пользовательских Markdown-модулей |
+| `get_project_modules` | Включенные модули, их содержимое и версии в проекте |
+| `configure_project_module` | Включить / убрать модуль или изменить документ по актуальной version |
+| `create_module_template` | Создать reusable Markdown-шаблон для проектов; не устанавливает исполняемый plugin |
+
+`list_modules` и `get_project_modules` возвращают summaries с `limit`, `offset`, `total`, `next_offset`. Для полного шаблона или содержимого одного документа передайте `module_id`; без него большие тексты не попадают в контекст. `configure_project_module` требует актуальную `expected_version`: отсутствие `content` сохраняет текст, `content: ""` явно очищает его; отключение сохраняет данные.
 
 1. Найдите проект, прочитайте доску и актуальную карточку.
 2. Создайте карточки прямо в проекте для новых шагов с типом задачи, целью и criteria. `rationale` — зачем существует задача; `reason` — почему выполняется конкретная запись.
@@ -162,3 +211,7 @@ Notes и event snapshots возвращаются как previews с `summary_on
 ```
 
 Используется официальный Python SDK `mcp==1.27.0` с `FastMCP`. Версионное API проверено по [official SDK server docs](https://github.com/modelcontextprotocol/python-sdk/blob/v1.27.0/docs/server.md). Настройка клиентов основана на [official Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) и [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp). Код main/v2 SDK имеет другой API и не является примером для этой фиксированной версии.
+
+## Навык для coding agents
+
+Repository skill [dashai](../.agents/skills/dashai/SKILL.md) содержит карту исходников и два сценария: поддержка самого DashAI и работа с проектной доской / архитектурой через MCP. Он не привязан к поставщику модели, не содержит credentials и не заменяет `AGENTS.md`. Скопируйте папку `dashai` целиком в каталог навыков своего клиента, если он поддерживает формат `SKILL.md`; workflow MCP из `references/using-mcp.md` можно использовать и в клиентах без навыков.

@@ -1,6 +1,7 @@
 """Browser integration check against an isolated real SQLite/API server, not mocked responses."""
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -61,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(page.get_by_role('heading',name='Browser QA')).to_be_visible()
                 expect(page.get_by_role('button',name='Первый раздел')).to_have_count(0)
                 expect(page.get_by_role('combobox',name='Фильтр раздела')).to_have_count(0)
-                expect(page.locator('.kanban-column')).to_have_count(5)
+                expect(page.get_by_role('heading',name='С чего начнём этот проект?')).to_be_visible()
                 expect(page.get_by_role('button',name='Новая задача',exact=True)).to_be_visible()
                 page.get_by_role('button',name='Новая задача',exact=True).click()
                 dialog.get_by_label('Название задачи').fill('Проверить сохранение правок')
@@ -95,6 +96,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                     page.keyboard.press('Escape')
                     expect(dialog).to_be_visible()
                     expect(type_picker).to_be_focused()
+                    page.once('dialog', lambda confirmation: confirmation.accept())
                     dialog.get_by_role('button',name='Отмена',exact=True).click()
                     expect(header_edit).to_be_focused()
                     expect(type_picker).to_have_count(0)
@@ -126,6 +128,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 dialog.get_by_role('button',name='Сохранить',exact=True).click()
                 expect(dialog.get_by_role('alert')).to_contain_text('проверки')
                 assert request('/tasks/'+task['id'])['task']['status']=='backlog'
+                page.once('dialog', lambda confirmation: confirmation.accept())
                 dialog.get_by_role('button',name='Отмена',exact=True).click()
                 expect(header_edit).to_be_focused()
                 dialog.get_by_label('Добавить запись',exact=True).select_option('evidence')
@@ -151,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 dialog.get_by_role('button',name='Обновить данные',exact=True).click()
                 expect(dialog.get_by_role('alert')).to_contain_text('Черновик сохранен')
                 dialog.get_by_role('button',name='Сохранить',exact=True).click()
-                expect(dialog.locator('.task-properties .priority')).to_contain_text('Высокий')
+                expect(dialog.locator('.task-properties .priority-mark')).to_contain_text('Высокий')
                 final=request('/tasks/'+task['id'])['task']
                 assert final['description']=='Fresh concurrent description' and final['priority']=='high' and final['task_type']=='bugfix'
                 checks.append('stale edit conflict keeps draft and never overwrites untouched concurrent fields')
@@ -217,14 +220,220 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 checks.append('mobile menu focus trap, Escape restore and hidden navigation excluded from Tab')
                 page.set_viewport_size({'width':1440,'height':1000})
                 page.get_by_role('button',name='Коннекторы',exact=False).first.click()
-                expect(page.locator('.connector-card')).to_have_count(2)
-                assert '--agent' in page.locator('.connector-card.codex pre').inner_text()
-                checks.append('Codex and Claude connector config displayed')
+                expect(page.locator('.connector-configurator pre')).to_contain_text('--agent')
+                expect(page.get_by_label('Приложение / MCP-клиент',exact=False).locator('option')).to_have_count(6)
+                page.get_by_label('Приложение / MCP-клиент',exact=False).select_option('cursor')
+                expect(page.locator('.connector-configurator')).to_contain_text('.cursor/mcp.json')
+                assert 'mcpServers' in page.locator('.connector-configurator pre').inner_text()
+                page.get_by_role('button',name='Отдельный агент',exact=True).click()
+                dialog.get_by_label('Имя модели или агента',exact=False).fill('Qwen · локальный ревьюер')
+                expect(dialog.get_by_label('Тип идентичности',exact=True)).to_have_value('custom')
+                dialog.get_by_role('button',name='Создать идентичность',exact=True).click()
+                expect(dialog.get_by_role('heading',name='Сохраните токен агента')).to_be_visible()
+                dialog.get_by_role('button',name='Токен сохранен',exact=True).click()
+                identity=next(agent for agent in request('/bootstrap')['agents'] if agent['name']=='Qwen · локальный ревьюер')
+                assert identity['kind']=='custom' and identity['last_seen'] is None
+                expect(page.get_by_label('Имя агента в истории',exact=False)).to_have_value(identity['id'])
+                page.locator('.connector-config-controls input').fill(str((ARTIFACTS/'never-read-token-file.json').resolve()))
+                expect(page.locator('.connector-configurator pre')).to_contain_text(identity['id'])
+                assert '--token-file' in page.locator('.connector-configurator pre').inner_text()
+                checks.append('six MCP client formats, custom model identity, isolated token path and truthful last-seen')
+                # Production documentation uses the real API/store and renders published Mermaid.
+                docs_project=request('/projects','POST',{'name':'Production Map QA','description':'Isolated documentation verification','reason':'Verify production map'})
+                page.reload()
+                page.locator('.sidebar').get_by_role('button',name='Production Map QA',exact=False).click()
+                page.locator('.project-tabs').get_by_role('button',name='Карта проекта',exact=True).click()
+                expect(page.get_by_text('Агент ещё не опубликовал карту этого проекта',exact=True)).to_be_visible()
+                page.get_by_role('button',name='Задача на анализ',exact=True).click()
+                expect(page.get_by_role('button',name='ожидает агента',exact=False)).to_be_visible()
+                assert request('/projects/'+docs_project['id'])['tasks'][0]['task_type']=='documentation'
+                prototype=context.new_page()
+                prototype.goto((ROOT/'docs/design/project-map.html').as_uri())
+                manifest=prototype.evaluate('''() => ({source_revision:'isolated-browser-QA',
+                  files:files.map(f=>({path:f.path,kind:'file',sha256:'1'.repeat(64),description:{title:f.title,summary:f.summary,purpose:f.why,workflow:f.steps.map(s=>s.join(': ')),related_paths:f.related}})),
+                  diagrams:Object.entries(notations).filter(([id])=>id!=='overview').map(([id,n])=>({id,title:n.title,notation:({context:'c4_context',containers:'c4_containers',components:'c4_components',sequence:'sequence',states:'state',data:'erd',flow:'flowchart'})[id],scope:n.scope,explanation:n.explanation.join('\\n'),legend:n.legend,source:n.source,related_paths:n.files}))})''')
+                prototype.close()
+                page.locator('.map-import summary').click()
+                page.get_by_label('Снимок JSON',exact=True).fill(json.dumps(manifest,ensure_ascii=False))
+                page.get_by_label('Причина публикации',exact=True).fill('Проверка реального импорта, без пользовательских данных')
+                page.get_by_role('button',name='Опубликовать снимок',exact=True).click()
+                page.get_by_label('Найти файл или объяснение',exact=True).fill('server/app.py')
+                expect(page.get_by_role('treeitem')).to_have_count(1)
+                page.get_by_role('treeitem').click()
+                expect(page.get_by_role('tree')).to_be_focused()
+                page.get_by_label('Найти файл или объяснение',exact=True).fill('')
+                expect(page.locator('.map-file-article')).to_contain_text('Единые правила для человека и агентов')
+                page.get_by_label('Основание проверки',exact=True).fill('Проверены текст и снимок в изолированном QA')
+                page.get_by_role('button',name='Подтвердить после сверки',exact=True).click()
+                expect(page.locator('.map-meta')).to_contain_text('Проверено человеком')
+                page.locator('.project-tabs').get_by_role('button',name='Архитектура',exact=True).click()
+                for item in manifest['diagrams']:
+                    page.get_by_role('combobox',name='Схема / нотация',exact=True).select_option(item['id'])
+                    expect(page.locator('.map-diagram iframe')).to_have_count(1,timeout=30000)
+                    expect(page.locator('.map-diagram iframe')).to_have_attribute('sandbox','')
+                    expect(page.locator('.map-file-article h2')).to_have_text(item['title'])
+                    assert page.locator('.map-diagram iframe').get_attribute('srcdoc').count('<svg')==1
+                related_path=manifest['diagrams'][-1]['related_paths'][0]
+                page.locator('.map-related').get_by_role('button',name=related_path,exact=True).click()
+                expect(page.locator('.map-tree [role=treeitem][aria-selected=true]')).to_have_attribute('data-path',related_path)
+                expect(page.locator('.map-file-article h2')).to_be_focused()
+                page.locator('.project-tabs').get_by_role('button',name='Документация',exact=True).click()
+                page.get_by_role('button',name='Настроить состав',exact=True).click()
+                page.get_by_label('Название',exact=True).fill('Production documentation')
+                for item in manifest['diagrams']:
+                    page.locator('.map-settings').get_by_role('checkbox',name=item['title'],exact=False).check()
+                page.locator('.doc-navigation').get_by_role('button',name='Архитектура и сценарии',exact=True).click()
+                expect(page.locator('.map-diagram iframe')).to_have_count(7,timeout=30000)
+                page.get_by_label('Причина сохранения',exact=True).fill('Сохраняем выбранные разделы и схемы')
+                pending_saves=[]
+                page.route('**/api/projects/*/map/document',lambda route:pending_saves.append(route))
+                page.get_by_role('button',name='Сохранить состав',exact=True).click()
+                expect(page.get_by_label('Название',exact=True)).to_be_disabled()
+                expect(page.get_by_label('Контекст',exact=True)).to_be_disabled()
+                expect(page.locator('.map-settings input[type=checkbox]').first).to_be_disabled()
+                assert len(pending_saves)==1
+                pending_saves.pop().continue_()
+                page.unroute('**/api/projects/*/map/document')
+                expect(page.get_by_label('Название',exact=True)).to_be_enabled()
+                expect(page.get_by_role('button',name='Сохранить состав',exact=True)).to_be_disabled()
+                page.locator('details.doc-source > summary').click()
+                page.get_by_label('Номер версии карты',exact=True).fill('2')
+                page.locator('.map-version').get_by_role('button',name='Открыть',exact=True).click()
+                expect(page.get_by_label('Название',exact=True)).to_be_disabled()
+                expect(page.locator('.map-settings input[type=checkbox]').first).to_be_disabled()
+                expect(page.get_by_role('button',name='К текущей карте',exact=True)).to_be_enabled()
+                with page.expect_download() as historical_download:
+                    page.get_by_role('button',name='Markdown',exact=True).click()
+                assert 'Версия карты: 2.' in Path(historical_download.value.path()).read_text(encoding='utf-8')
+                page.get_by_role('button',name='К текущей карте',exact=True).click()
+                expect(page.get_by_label('Название',exact=True)).to_be_enabled()
+                expect(page.get_by_label('Название',exact=True)).to_have_value('Production documentation')
+                with page.expect_download() as downloaded:
+                    page.get_by_role('button',name='Markdown',exact=True).click()
+                content=Path(downloaded.value.path()).read_text(encoding='utf-8')
+                assert 'Production documentation' in content and 'sequenceDiagram' in content and 'erDiagram' in content
+                with page.expect_download() as downloaded:
+                    page.get_by_role('button',name='HTML',exact=True).click()
+                exported_html=ARTIFACTS/'production-documentation.html'
+                downloaded.value.save_as(exported_html)
+                html=exported_html.read_text(encoding='utf-8')
+                assert html.count('<svg')==7 and 'Content-Security-Policy' in html
+                assert '<script' not in html and '<iframe' not in html
+                page.get_by_label('Название',exact=True).fill('Draft survives conflict')
+                page.get_by_label('Причина сохранения',exact=True).fill('Verify conflict')
+                map_url='/projects/'+docs_project['id']+'/map'
+                current_map=request(map_url)
+                request(map_url+'/document','PATCH',{'expected_version':current_map['version'],'document':{**current_map['document'],'title':'Concurrent saved title'},'reason':'Concurrent document save'})
+                page.get_by_role('button',name='Сохранить состав',exact=True).click()
+                expect(page.locator('.project-map [role=alert]')).to_contain_text('Конфликт')
+                expect(page.get_by_label('Название',exact=True)).to_have_value('Draft survives conflict')
+                page.once('dialog',lambda d:d.accept())
+                page.get_by_role('button',name='Перечитать карту',exact=True).click()
+                expect(page.get_by_label('Название',exact=True)).to_have_value('Concurrent saved title')
+                page.reload()
+                page.locator('.project-tabs').get_by_role('button',name='Документация',exact=True).click()
+                page.get_by_role('button',name='Настроить состав',exact=True).click()
+                expect(page.get_by_label('Название',exact=True)).to_have_value('Concurrent saved title')
+                page.locator('.doc-navigation').get_by_role('button',name='Архитектура и сценарии',exact=True).click()
+                expect(page.locator('.map-diagram iframe')).to_have_count(7,timeout=30000)
+                for width in (1440,390,320):
+                    page.set_viewport_size({'width':width,'height':1000 if width==1440 else 844})
+                    for name in ('Карта проекта','Архитектура','Документация'):
+                        page.locator('.project-tabs').get_by_role('button',name=name,exact=True).click()
+                        if name=='Документация':
+                            if width<=800:
+                                page.get_by_label('Раздел документа',exact=True).select_option('diagrams')
+                            else:
+                                page.locator('.doc-navigation').get_by_role('button',name='Архитектура и сценарии',exact=True).click()
+                            expect(page.locator('.map-diagram iframe')).to_have_count(7,timeout=30000)
+                        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Map reflow {name} at {width}'
+                        page.evaluate('window.scrollTo(0,0)')
+                        suffix={'Карта проекта':'tree','Архитектура':'architecture','Документация':'documentation'}[name]
+                        for frame in page.locator('.map-diagram iframe').all():
+                            expect(frame.content_frame.locator('svg')).to_be_visible(timeout=30000)
+                            frame.scroll_into_view_if_needed()
+                            page.wait_for_timeout(100)
+                            if name=='Архитектура':
+                                frame.screenshot(path=str(ARTIFACTS/f'production-diagram-{width}.png'))
+                                metrics=frame.content_frame.locator('svg').evaluate('(svg)=>({box:svg.getBoundingClientRect().toJSON(),viewBox:svg.getAttribute("viewBox"),text:svg.querySelector("text")?.getBoundingClientRect().toJSON()})')
+                                (ARTIFACTS/f'production-diagram-{width}.json').write_text(json.dumps(metrics),encoding='utf-8')
+                        page.evaluate('window.scrollTo(0,0)')
+                        page.screenshot(path=str(ARTIFACTS/f'production-map-{suffix}-{width}.png'),full_page=True)
+                        page.screenshot(path=str(ARTIFACTS/f'production-map-{suffix}-{width}-viewport.png'))
+                        if name=='Документация':
+                            page.locator('.map-document-preview').evaluate('(el)=>el.scrollIntoView({block:"start"})')
+                            page.wait_for_timeout(100)
+                            page.screenshot(path=str(ARTIFACTS/f'production-document-preview-{width}.png'))
+                checks.append('production map import/review, seven Mermaid renders, architecture-to-file focus, delayed-save guard, historical read-only/export, composition, exports, conflicts, reload and mobile reflow')
+                page.set_viewport_size({'width':1440,'height':1000})
+                page.locator('.project-tabs').get_by_role('button',name='Модули',exact=True).click()
+                page.get_by_role('button',name='Каталог',exact=False).click()
+                page.locator('.module-info').get_by_role('button',name='Архитектурные решения',exact=True).click()
+                page.get_by_role('button',name='Свой модуль',exact=True).click()
+                page.locator('.module-create').get_by_label('Название',exact=True).fill('Черновик шаблона QA')
+                page.get_by_label('Текст документа',exact=False).fill('## Решение QA\nИспользуем общий API. Текст сохраняется после отключения.')
+                expect(page.get_by_role('button',name='Создать шаблон',exact=True)).to_be_disabled()
+                pending_modules=[]
+                page.route('**/api/projects/*/modules/decisions',lambda route:pending_modules.append(route))
+                page.get_by_role('button',name='Добавить и сохранить',exact=True).click()
+                expect(page.get_by_label('Текст документа',exact=False)).to_be_disabled()
+                expect(page.locator('.module-create').get_by_label('Название',exact=True)).to_be_disabled()
+                assert len(pending_modules)==1
+                pending_modules.pop().continue_()
+                page.unroute('**/api/projects/*/modules/decisions')
+                expect(page.get_by_role('button',name='Сохранить',exact=True)).to_be_disabled()
+                expect(page.get_by_role('button',name='Создать шаблон',exact=True)).to_be_enabled()
+                page.once('dialog',lambda value:value.accept())
+                page.get_by_role('button',name='Свой модуль',exact=True).click()
+                row=page.locator('.module-row').filter(has=page.get_by_role('button',name='Архитектурные решения',exact=True))
+                row.get_by_role('button',name='Убрать',exact=True).click()
+                row.get_by_role('button',name='Добавить',exact=True).click()
+                row.get_by_role('button',name='Архитектурные решения',exact=True).click()
+                expect(page.get_by_label('Текст документа',exact=False)).to_have_value(re.compile('Используем общий API'))
+                page.get_by_label('Текст документа',exact=False).fill('Несохранённый ADR')
+                page.once('dialog',lambda value:value.dismiss())
+                page.locator('.project-tabs').get_by_role('button',name='Доска',exact=False).click()
+                expect(page.get_by_label('Текст документа',exact=False)).to_have_value('Несохранённый ADR')
+                page.get_by_role('button',name='Сохранить',exact=True).click()
+                expect(page.get_by_role('button',name='Сохранить',exact=True)).to_be_disabled()
+                map_row=page.locator('.module-row').filter(has=page.get_by_role('button',name='Карта проекта',exact=True))
+                map_row.get_by_role('button',name='Убрать',exact=True).click()
+                expect(page.locator('.project-tabs').get_by_role('button',name='Карта проекта',exact=True)).to_have_count(0)
+                map_row.get_by_role('button',name='Добавить',exact=True).click()
+                expect(page.locator('.project-tabs').get_by_role('button',name='Карта проекта',exact=True)).to_be_visible()
+                integration_row=page.locator('.module-row').filter(has=page.get_by_role('button',name='Confluence и Jira',exact=True))
+                integration_row.get_by_role('button',name='Добавить',exact=True).click()
+                page.locator('.project-tabs').get_by_role('button',name='Интеграции',exact=True).click()
+                expect(page.locator('.integration-row')).to_have_count(2)
+                expect(page.get_by_role('button',name='Проверить и подключить',exact=True).first).to_be_disabled()
+                page.locator('.integration-row').first.get_by_label('Размещение',exact=False).select_option('data_center')
+                expect(page.locator('.integration-row').first.get_by_label('Personal Access Token',exact=True)).to_have_attribute('type','password')
+                page.once('dialog',lambda value:value.accept())
+                page.locator('.project-tabs').get_by_role('button',name='Модули',exact=True).click()
+                for width in (1440,390,320):
+                    page.set_viewport_size({'width':width,'height':1000 if width==1440 else 844})
+                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Module reflow {width}'
+                    assert page.locator('.module-search input').evaluate("node=>getComputedStyle(node).backgroundColor")=='rgb(13, 21, 32)'
+                    if width<700:
+                        tops=page.locator('.tabs-nav>button').evaluate_all('nodes=>nodes.map(node=>node.getBoundingClientRect().top)')
+                        assert max(tops)-min(tops)<1, f'Project tabs wrap at {width}: {tops}'
+                        assert page.locator('.module-search input').evaluate("node=>getComputedStyle(node).fontSize")=='16px'
+                    page.screenshot(path=str(ARTIFACTS/f'workspace-modules-{width}.png'),full_page=True)
+                    page.locator('.project-tabs').get_by_role('button',name='Интеграции',exact=True).click()
+                    expect(page.locator('.integration-row')).to_have_count(2)
+                    assert page.locator('.integration-form input[type=password]').first.evaluate("node=>getComputedStyle(node).backgroundColor")=='rgb(13, 21, 32)'
+                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Integration reflow {width}'
+                    page.screenshot(path=str(ARTIFACTS/f'workspace-integrations-{width}.png'),full_page=True)
+                    page.locator('.project-tabs').get_by_role('button',name='Модули',exact=True).click()
+                checks.append('project modules enable/disable preserve text, unsaved guard, feature tabs, optional Cloud/DC connectors and responsive settings')
                 assert not page_errors,page_errors
                 browser.close()
             (ARTIFACTS/'ui-results.json').write_text(json.dumps({'passed':checks,'count':len(checks)},ensure_ascii=False,indent=2),encoding='utf-8')
             print(f'PASS: {len(checks)} browser integration checks; artifacts/qa/ui-results.json')
         finally:
-            process.terminate()
+            if os.name=='nt':
+                subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            else:
+                process.terminate()
             try: process.wait(timeout=5)
             except subprocess.TimeoutExpired: process.kill();process.wait()

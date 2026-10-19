@@ -46,7 +46,13 @@ def main() -> None:
     mode, *argv = sys.argv[1:]
     if mode == "--mcp":
         from connectors.mcp_server import main as run
-        handle = acquire_mutex("MCP")
+        import argparse
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--data-dir", type=Path)
+        args, _ = parser.parse_known_args(argv)
+        handle = acquire_mutex("MCP", args.data_dir)
+        if handle is None:
+            raise SystemExit("Не удалось зарезервировать активную MCP-сессию DashAI")
         try:
             run(argv)
         finally:

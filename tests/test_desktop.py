@@ -163,7 +163,7 @@ def test_vscode_stop_requires_instance_proof_and_preserves_data(tmp_path):
 
 
 def test_vscode_runtime_health_matches_reserved_instance(tmp_path, monkeypatch):
-    monkeypatch.setattr(desktop_main, "mcp_running", lambda: False)
+    monkeypatch.setattr(desktop_main, "mcp_running", lambda *_: False)
     server, thread, base_url = desktop_main.start_server(tmp_path, 0, vscode_mode=True)
     try:
         runtime = json.loads((tmp_path / "runtime.json").read_text(encoding="utf-8"))
@@ -217,14 +217,14 @@ def test_vscode_idle_and_headless_lifetime(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sys, "argv", ["Agentboard", "--vscode", "--data-dir", str(tmp_path)])
     monkeypatch.setattr(desktop_main, "start_server", start)
-    monkeypatch.setattr(desktop_main, "acquire_mutex", lambda: "owned-test-mutex")
+    monkeypatch.setattr(desktop_main, "acquire_mutex", lambda **_: "owned-test-mutex")
     monkeypatch.setattr(desktop_main, "release_mutex", lambda handle: calls.append(handle))
     monkeypatch.setattr(desktop_main.time, "sleep", lambda _: None)
     monkeypatch.setattr(desktop_main.webbrowser, "open", lambda _: pytest.fail("VS Code opened a browser"))
     monkeypatch.setattr(desktop_main, "Launcher", lambda *_: pytest.fail("VS Code opened a launcher"))
     desktop_main.main()
     assert server.should_exit and calls == ["joined", "owned-test-mutex"]
-    monkeypatch.setattr(desktop_main, "acquire_mutex", lambda: None)
+    monkeypatch.setattr(desktop_main, "acquire_mutex", lambda **_: None)
     desktop_main.main()
     expected_mode[0] = False
     calls.clear()
@@ -232,7 +232,7 @@ def test_vscode_idle_and_headless_lifetime(tmp_path, monkeypatch):
     running = iter([True, False])
     thread.is_alive = lambda: next(running)
     monkeypatch.setattr(sys, "argv", ["Agentboard", "--headless", "--data-dir", str(tmp_path)])
-    monkeypatch.setattr(desktop_main, "acquire_mutex", lambda: "owned-test-mutex")
+    monkeypatch.setattr(desktop_main, "acquire_mutex", lambda **_: "owned-test-mutex")
     monkeypatch.setattr(desktop_main, "should_stop_vscode", lambda _: pytest.fail("Diagnostic mode used idle shutdown"))
     desktop_main.main()
     assert calls == ["joined", "owned-test-mutex"]

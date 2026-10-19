@@ -1,6 +1,6 @@
 {
   "name": "agentboard",
-  "version": "1.4.3",
+  "version": "1.7.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,10 @@
     "backup": "node scripts/python.mjs scripts/backup.py"
   },
   "dependencies": {
+    "dompurify": "3.4.17",
     "lucide-react": "1.51.0",
+    "marked": "16.4.2",
+    "mermaid": "12.2.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

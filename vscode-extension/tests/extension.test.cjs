@@ -7,7 +7,14 @@ const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const vm = require('node:vm');
-const { parseRuntime, discover, copyRuntime, boardHtml, requestJson, needsRuntimeUpgrade } = require('../extension.cjs');
+const { parseRuntime, discover, copyRuntime, boardHtml, workspaceRequest, requestJson, needsRuntimeUpgrade, runtimeStatus, binaryName, personalDataDir } = require('../extension.cjs');
+
+test('macOS uses native binary names and Application Support; Windows retains its existing location', () => {
+  assert.equal(binaryName('AgentboardMCP', 'darwin'), 'AgentboardMCP');
+  assert.equal(binaryName('Agentboard', 'win32'), 'Agentboard.exe');
+  assert.equal(personalDataDir('darwin'), path.join(os.homedir(), 'Library', 'Application Support', 'Agentboard'));
+  assert.equal(personalDataDir('win32'), path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Agentboard'));
+});
 
 test('Discovery verifies exact instance without sending its expected nonce', async () => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentboard-discovery-'));
@@ -50,6 +57,15 @@ test('Version lifecycle never stops newer runtimes, desktop or active MCP', () =
   assert.equal(needsRuntimeUpgrade({ ...runtime, mcp_running: true }, '1.5.0'), false);
 });
 
+test('Pending runtime upgrade remains visible after the notification disappears', () => {
+  const pending = runtimeStatus({version:'1.5.2',mode:'vscode',mcp_running:true}, '1.7.0');
+  assert.match(pending.text, /warning.*1\.5\.2.*1\.7\.0/);
+  assert.match(pending.tooltip, /MCP.*Остановить локальный сервер.*Открыть доску/);
+  assert.equal(needsRuntimeUpgrade({version:'1.5.2',mode:'vscode',mcp_running:true}, '1.7.0'), false);
+  assert.match(runtimeStatus({version:'1.7.0'}, '1.7.0').text, /project.*1\.7\.0/);
+  assert.doesNotMatch(runtimeStatus({version:'1.8.0'}, '1.7.0').tooltip, /Остановить/);
+});
+
 test('Concurrent runtime staging retains durable MCP path and personal data', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'agentboard-copy-'));
   const extension = path.join(directory, 'extension');
@@ -58,20 +74,27 @@ test('Concurrent runtime staging retains durable MCP path and personal data', as
   await fs.mkdir(path.join(bundle, '_internal'), { recursive: true });
   await fs.mkdir(data);
   await fs.writeFile(path.join(bundle, '_internal', 'package.json'), JSON.stringify({ version: '1.4.0' }));
-  await fs.writeFile(path.join(bundle, 'AgentboardMCP.exe'), 'fixture');
+  await fs.writeFile(path.join(bundle, binaryName('AgentboardMCP')), 'fixture');
+  await fs.writeFile(path.join(bundle, binaryName('Agentboard')), 'fixture');
   await fs.writeFile(path.join(data, 'agentboard.sqlite3'), 'personal data fixture');
   try {
     const [first, second] = await Promise.all([copyRuntime(extension, data, '1.4.0'), copyRuntime(extension, data, '1.4.0')]);
     assert.equal(first, second);
     assert.deepEqual(await fs.readdir(path.join(data, 'vscode-runtime')), ['1.4.0']);
     await fs.rename(extension, path.join(directory, 'removed-extension'));
-    assert.equal(await fs.readFile(path.join(first, 'AgentboardMCP.exe'), 'utf8'), 'fixture');
+    assert.equal(await fs.readFile(path.join(first, binaryName('AgentboardMCP')), 'utf8'), 'fixture');
+    if (process.platform === 'darwin') assert((await fs.stat(path.join(first, 'AgentboardMCP'))).mode & 0o111);
     assert.equal(await fs.readFile(path.join(data, 'agentboard.sqlite3'), 'utf8'), 'personal data fixture');
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 });
 
 test('Webview confines resources and messages to the validated runtime frame', () => {
-  const html = boardHtml({ base_url: 'http://127.0.0.1:4243' });
+  const runtime = { base_url: 'http://127.0.0.1:4243', version: '1.5.0', instance_id: crypto.randomUUID() };
+  const html = boardHtml(runtime);
+  const frame = content => content.match(/<iframe[^>]*src="([^"]+)"/)[1];
+  assert.equal(new URL(frame(html).replaceAll('&amp;', '&')).searchParams.get('runtime'), `${runtime.version}-${runtime.instance_id}`);
+  assert.notEqual(frame(html), frame(boardHtml({ ...runtime, version: '1.5.2' })));
+  assert.notEqual(frame(html), frame(boardHtml({ ...runtime, instance_id: crypto.randomUUID() })));
   assert.match(html, /default-src 'none'; frame-src http:\/\/127\.0\.0\.1:4243/);
   assert.match(html, /event.source === frame.contentWindow && event.origin === origin/);
   assert.match(html, /nonce="[a-f0-9]{48}"/);
@@ -98,6 +121,44 @@ test('Webview bridge accepts the preload reply when VS Code masks window.parent'
   window.receive({ source: child, origin, data: reply });
   window.receive({ source: {}, origin: 'https://example.com', data: reply });
   assert.deepEqual(replies, [[reply, origin]]);
+});
+
+test('Workspace preferences use one durable key and reject malformed or oversized state without overwriting it', async () => {
+  const key = 'dashai.workspace.v1', values = new Map();
+  const storage = {
+    get: (name, fallback) => values.has(name) ? values.get(name) : fallback,
+    update: async (name, value) => { values.set(name, value); },
+  };
+  const projectId = crypto.randomUUID();
+  const preferences = { view: 'board', query: 'Проверка', taskTypeFilter: 'development', subprojectFilter: '',
+    agentFilter: 'codex', statusFilter: 'review', priorityFilter: '', listView: true, filtersOpen: false };
+  const state = { version: 1, projectId, view: 'board', taskId: crypto.randomUUID(), projects: { [projectId]: preferences } };
+  const save = value => workspaceRequest(storage, 'save_workspace', JSON.stringify(value));
+  assert.equal(await workspaceRequest(storage, 'load_workspace'), null);
+  assert.equal(await save(state), true);
+  assert.deepEqual(await workspaceRequest(storage, 'load_workspace'), state);
+  assert.deepEqual([...values.keys()], [key]);
+
+  for (const invalid of [null, [], { ...state, version: 2 }, { ...state, token: 'not a preference' },
+    { ...state, projectId: '../../other-store' }, { ...state, taskId: 'AD-001' }, { ...state, view: null },
+    { ...state, projects: [] }, { ...state, projects: { constructor: preferences } },
+    ...[{ ...preferences, credentials: {} }, { ...preferences, listView: 'true' },
+      { ...preferences, query: {} }, { ...preferences, query: 'x'.repeat(2001) }]
+      .map(value => ({ ...state, projects: { [projectId]: value } }))]) {
+    await assert.rejects(save(invalid));
+    assert.deepEqual(values.get(key), state);
+  }
+  for (const raw of [undefined, '{}', '{broken']) await assert.rejects(workspaceRequest(storage, 'save_workspace', raw));
+  await assert.rejects(workspaceRequest(storage, 'save_workspace', ' '.repeat(102401)), /100 КБ/);
+  await assert.rejects(workspaceRequest(storage, 'save_workspace', 'я'.repeat(60000)), /100 КБ/);
+  await assert.rejects(workspaceRequest(storage, 'other_action', JSON.stringify(state)));
+  assert.deepEqual(values.get(key), state);
+  values.set(key, { ...state, version: 2 });
+  await assert.rejects(workspaceRequest(storage, 'load_workspace'));
+  const empty = { version: 1, projectId: null, view: 'overview', taskId: null, projects: {} };
+  assert.equal(await save(empty), true);
+  assert.deepEqual(await workspaceRequest(storage, 'load_workspace'), empty);
+  await assert.rejects(workspaceRequest({ ...storage, update: async () => { throw new Error('Storage unavailable'); } }, 'save_workspace', JSON.stringify(state)), /Storage unavailable/);
 });
 
 test('Local JSON transport rejects redirects and oversized responses', async () => {

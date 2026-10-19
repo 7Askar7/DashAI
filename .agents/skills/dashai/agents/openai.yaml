@@ -1,0 +1,4 @@
+interface:
+  display_name: "DashAI"
+  short_description: "Maintain DashAI and coordinate project work safely"
+  default_prompt: "Use $dashai to inspect this project and record verified work through its MCP connector."

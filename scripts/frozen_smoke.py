@@ -1,12 +1,15 @@
 """Exercise the real frozen GUI server and MCP companion with an isolated personal store."""
+import argparse
 import asyncio
 import json
+import os
 import socket
 import subprocess
 import tempfile
 import time
 import tomllib
 from pathlib import Path
+from uuid import uuid4
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
@@ -17,9 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "artifacts" / "desktop" / "Agentboard"
 
 
-async def protocol(command: str, data: Path) -> None:
+async def protocol(command: str, data: Path, environment: dict) -> None:
     parameters = StdioServerParameters(command=command, args=["--mcp", "--agent", "codex",
-                                                              "--data-dir", str(data)])
+                                                              "--data-dir", str(data)], env=environment)
     with (data.parent / "mcp-stderr.log").open("w", encoding="utf-8") as errlog:
         await protocol_session(parameters, errlog)
     errors = (data.parent / "mcp-stderr.log").read_text(encoding="utf-8")
@@ -30,8 +33,14 @@ async def protocol_session(parameters, errlog) -> None:
     async with stdio_client(parameters, errlog=errlog) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
+            data_dir = Path(parameters.args[parameters.args.index('--data-dir') + 1])
+            runtime = json.loads((data_dir / 'runtime.json').read_text(encoding='utf-8'))
+            opener = build_opener(ProxyHandler({}))
+            with opener.open(runtime['base_url'] + '/api/health', timeout=5) as response:
+                assert json.load(response)['mcp_running'] is True
             tools = {tool.name for tool in (await session.list_tools()).tools}
             assert {"create_project", "get_board", "create_task", "log_change", "connector_status", "create_subproject", "update_subproject"} <= tools
+            assert {"list_project_releases", "get_project_release", "create_project_release", "update_project_release"} <= tools
 
             async def call(name: str, arguments: dict) -> dict:
                 result = await session.call_tool(name, arguments)
@@ -44,6 +53,47 @@ async def protocol_session(parameters, errlog) -> None:
             assert status["api"]["status"] == "ok"
             project = await call("create_project", {"name": "Frozen smoke", "reason": "Verify bundled MCP",
                                                        "idempotency_key": "frozen-project"})
+            assert (await call('get_project_map', {'project_id': project['id']}))['version'] == 0
+            modules = (await call('get_project_modules', {'project_id': project['id']}))['modules']
+            assert any(item['id'] == 'map' and item['enabled'] for item in modules)
+            assert any(item['id'] == 'integrations' and not item['enabled'] for item in modules)
+            document = await call('configure_project_module', {'project_id': project['id'], 'module_id': 'decisions',
+                'expected_version': 0, 'enabled': True, 'content': 'Frozen ADR', 'reason': 'Verify modular knowledge', 'idempotency_key': 'frozen-module'})
+            assert document['version'] == 1
+            await call('configure_project_module', {'project_id': project['id'], 'module_id': 'decisions',
+                'expected_version': 1, 'enabled': False, 'reason': 'Verify non-destructive disable', 'idempotency_key': 'frozen-module-off'})
+            document = (await call('get_project_modules', {'project_id': project['id'], 'module_id': 'decisions'}))['module']
+            assert document['content'] == 'Frozen ADR' and not document['enabled']
+            assert any(item['id'] == 'releases' and not item['enabled'] for item in modules)
+            await call('configure_project_module', {'project_id': project['id'], 'module_id': 'releases',
+                'expected_version': 0, 'enabled': True, 'reason': 'Verify bundled release history', 'idempotency_key': 'frozen-releases-on'})
+            release = await call('create_project_release', {'project_id': project['id'], 'version_name': 'smoke-1.0',
+                'changelog': 'Frozen release changes', 'reason': 'Record tested release scope', 'idempotency_key': 'frozen-release'})
+            assert release['status'] == 'draft' and release['version'] == 1
+            assert await call('get_project_release', {'project_id': project['id'], 'release_id': release['id']}) == release
+            page = await call('list_project_releases', {'project_id': project['id'], 'q': 'PRODUCTION', 'limit': 1})
+            assert page['total'] == 1 and page['releases'][0]['changelog_preview'] == release['changelog']
+            assert 'changelog' not in page['releases'][0]
+            released = await call('update_project_release', {'project_id': project['id'], 'release_id': release['id'],
+                'expected_version': 1, 'changes': {'status': 'released', 'released_at': '2026-10-17'},
+                'reason': 'Record release date', 'idempotency_key': 'frozen-release-publish'})
+            assert released['version'] == 2 and released['status'] == 'released' and released['changelog'] == release['changelog']
+            await call('configure_project_module', {'project_id': project['id'], 'module_id': 'releases',
+                'expected_version': 1, 'enabled': False, 'reason': 'Preserve hidden history', 'idempotency_key': 'frozen-releases-off'})
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/releases/{release['id']}", timeout=5) as response:
+                assert json.load(response) == released
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/export", timeout=5) as response:
+                exported = json.load(response)
+            assert exported['releases'] == [released]
+            assert any(item['action'] == 'project_release.updated' for item in exported['events'])
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/integrations", timeout=5) as response:
+                assert json.load(response)['integrations'] == []
+            publication = await call('publish_project_map', {'project_id': project['id'], 'expected_version': 0,
+                'source_revision': 'frozen-check', 'files': [{'path': 'src/App.tsx', 'sha256': '1'*64,
+                'description': {'title': 'UI', 'summary': 'Shared project UI', 'purpose': 'Human workspace'}}],
+                'reason': 'Verify bundled documentation API', 'idempotency_key': 'frozen-map'})
+            assert publication['version'] == 1
+            assert (await call('get_project_map', {'project_id': project['id'], 'path': 'src/App.tsx'}))['file']['description']['title'] == 'UI'
             task = await call("create_task", {"project_id": project["id"], "task_type": "testing",
                                                "title": "Frozen protocol works", "rationale": "Check distributed executable",
                                                "acceptance_criteria": "Shared API and stdio tools operate",
@@ -88,6 +138,18 @@ async def protocol_session(parameters, errlog) -> None:
             history = await call("get_history", {"project_id": project["id"]})
             assert sum(item["action"] == "subproject.created" for item in history["events"]) == 3
             assert any(item["action"] == "subproject.updated" for item in history["events"])
+            with opener.open(runtime['base_url'] + f"/api/projects/{project['id']}/export", timeout=5) as response:
+                events = json.load(response)['events']
+            assert len(events) > 4
+            for query, expected in (
+                ('order=desc', events[-2:][::-1]),
+                (f"order=desc&before={events[-2]['id']}", events[-4:-2][::-1]),
+                ('', events[:2]),
+                (f"after={events[1]['id']}", events[2:4]),
+            ):
+                with opener.open(runtime['base_url'] + f"/api/history?project_id={project['id']}&limit=2&{query}", timeout=5) as response:
+                    page = json.load(response)
+                assert page == {'events': expected, 'next_cursor': expected[-1]['id']}, f"Frozen history pagination: {query}"
             section = await call("create_section", {"project_id": project["id"], "title": "Legacy compatibility",
                                                       "reason": "Verify existing clients", "idempotency_key": "frozen-section"})
             legacy = await call("create_task", {"project_id": project["id"], "section_id": section["id"],
@@ -97,26 +159,34 @@ async def protocol_session(parameters, errlog) -> None:
 
 
 def main() -> None:
-    gui = BUNDLE / "Agentboard.exe"
-    companion = BUNDLE / "AgentboardMCP.exe"
+    gui = BUNDLE / ("Agentboard.exe" if os.name == "nt" else "Agentboard")
+    companion = BUNDLE / ("AgentboardMCP.exe" if os.name == "nt" else "AgentboardMCP")
     assert gui.is_file() and companion.is_file(), "Build the desktop bundle first"
     expected_version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
     version = subprocess.run([str(companion), "--version"], capture_output=True, text=True, timeout=30)
     assert version.returncode == 0 and version.stdout.strip() == expected_version, version.stderr
     with tempfile.TemporaryDirectory(prefix="agentboard-frozen-") as directory:
         data = Path(directory) / "personal data"
+        # The production app's single-instance mutex must remain untouched by QA.
+        environment = dict(os.environ, USERNAME="DashAI-QA-" + uuid4().hex,
+                           LOCALAPPDATA=str(Path(directory) / "local"))
+        environment.pop("AGENTBOARD_TOKEN", None)
         repository = Path(directory) / "repo with spaces"
         repository.mkdir()
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         url = f"http://127.0.0.1:{port}"
-        process = subprocess.Popen([str(gui), "--headless", "--data-dir", str(data), "--port", str(port)])
+        process = subprocess.Popen([str(gui), "--headless", "--data-dir", str(data), "--port", str(port)],
+                                   env=environment, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         opener = build_opener(ProxyHandler({}))
         try:
             deadline = time.monotonic() + 45
             while True:
-                assert process.poll() is None, "Frozen GUI server exited before health check"
+                if process.poll() is not None:
+                    log = data / "logs" / "desktop.log"
+                    raise AssertionError("Frozen GUI server exited before health check: " +
+                                         (log.read_text(encoding="utf-8") if log.is_file() else "No startup log"))
                 try:
                     with opener.open(url + "/api/health", timeout=2) as response:
                         assert json.load(response)["status"] == "ok"
@@ -126,6 +196,7 @@ def main() -> None:
                         raise AssertionError("Frozen GUI server did not become healthy")
                     time.sleep(0.25)
             with opener.open(url, timeout=5) as response:
+                assert response.headers.get('Cache-Control') == 'no-cache'
                 page = response.read()
                 assert page == (BUNDLE / "_internal" / "dist" / "index.html").read_bytes()
                 assert b"<title>DashAI" in page
@@ -140,7 +211,7 @@ def main() -> None:
             assert Path(metadata["data_dir"]).samefile(data)
             assert metadata["desktop"] is True and metadata["mcp_script"] == "--mcp"
             setup = subprocess.run([str(companion), "--setup-connectors", "--project-root", str(repository),
-                                    "--data-dir", str(data)], capture_output=True, text=True, timeout=30)
+                                    "--data-dir", str(data)], capture_output=True, text=True, timeout=30, env=environment)
             assert setup.returncode == 0, setup.stderr
             claude = json.loads((repository / ".mcp.json").read_text(encoding="utf-8"))
             codex = tomllib.loads((repository / ".codex" / "config.toml").read_text(encoding="utf-8"))
@@ -151,13 +222,16 @@ def main() -> None:
                 assert Path(entry["args"][entry["args"].index("--credentials") + 1]).samefile(data / "connector-secrets.json")
                 assert "--url" not in entry["args"]
             assert Path(codex["mcp_servers"]["agentboard"]["cwd"]).samefile(repository)
-            asyncio.run(protocol(str(companion), data))
+            asyncio.run(protocol(str(companion), data, environment))
         finally:
             if process.poll() is None:
                 process.terminate()
             process.wait(timeout=15)
-    print("Frozen smoke passed: version, isolated data, DashAI UI/cover, project configs, real MCP nested subprojects on one board, typed tasks and legacy compatibility.")
+    print("Frozen smoke passed: version, isolated data, DashAI UI/cover, project configs, real MCP release history and export, latest-first HTTP history with legacy delta sync, nested subprojects on one board, typed tasks and legacy compatibility.")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--bundle', type=Path, default=BUNDLE)
+    BUNDLE = parser.parse_args().bundle.resolve()
     main()

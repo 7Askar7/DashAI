@@ -40,7 +40,7 @@ def start_server(data_dir: Path, port: int | None = None, *, vscode_mode: bool =
                          "version": VERSION, "pid": os.getpid()}
     app.state.last_activity = time.monotonic()
     app.state.shutdown_requested = False
-    app.state.mcp_running = mcp_running
+    app.state.mcp_running = lambda: mcp_running(data_dir)
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
@@ -286,7 +286,7 @@ def main():
         parser.error("Некорректный порт")
     (data_dir / "logs").mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, handlers=[RotatingFileHandler(data_dir / "logs" / "desktop.log", maxBytes=1024 * 1024, backupCount=3, encoding="utf-8")])
-    handle = acquire_mutex()
+    handle = acquire_mutex(data_dir=data_dir)
     if handle is None:
         if not args.no_browser and not args.headless:
             open_previous(data_dir)

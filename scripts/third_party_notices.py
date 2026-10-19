@@ -1,12 +1,15 @@
 """Collect installed dependency license texts for the redistributable bundle."""
 from importlib.metadata import distributions
 from pathlib import Path
+import json
 import sys
+import sysconfig
 
 root = Path(__file__).resolve().parents[1]
 parts = ["Agentboard dependency notices\n\nPython build environment licenses follow.\n"]
 interpreter = Path(sys.base_prefix)
-parts.extend(["\n=== CPython ===\n", (interpreter / "LICENSE.txt").read_text(encoding="utf-8")])
+python_license = next(path for path in (interpreter / 'LICENSE.txt', Path(sysconfig.get_path('stdlib')) / 'LICENSE.txt') if path.is_file())
+parts.extend(["\n=== CPython ===\n", python_license.read_text(encoding="utf-8")])
 for path in (interpreter / "tcl").glob("*/license.terms"):
     parts.extend([f"\n=== {path.parent.name} ===\n", path.read_text(encoding="utf-8")])
 for package in sorted(distributions(), key=lambda item: item.metadata.get("Name", "").lower()):
@@ -23,11 +26,18 @@ for package in sorted(distributions(), key=lambda item: item.metadata.get("Name"
             found = True
     if not found:
         parts.append(f"License metadata: {package.metadata.get('License-Expression') or package.metadata.get('License') or 'See upstream package'}\n")
-for name in ("react", "react-dom", "lucide-react", "scheduler"):
-    folder = root / "node_modules" / name
-    for path in folder.glob("*LICENSE*"):
-        if path.is_file():
-            parts.extend([f"\n=== npm {name} ===\n", path.read_text(encoding="utf-8")])
+lock = json.loads((root / 'package-lock.json').read_text(encoding='utf-8'))
+for relative, metadata in lock['packages'].items():
+    if not relative.startswith('node_modules/') or metadata.get('dev'):
+        continue
+    folder = root / relative
+    if not folder.is_dir():
+        continue
+    parts.append(f"\n=== npm {relative.removeprefix('node_modules/')} {metadata.get('version', '')} ===\n")
+    for path in folder.iterdir():
+        if path.is_file() and path.name.lower().startswith(('license', 'copying', 'notice')):
+            parts.append(path.read_text(encoding='utf-8', errors='replace'))
+    parts.append(f"License metadata: {metadata.get('license', 'See upstream package')}\n")
 output = root / "build" / "desktop" / "THIRD_PARTY_NOTICES.txt"
 output.parent.mkdir(parents=True, exist_ok=True)
 output.write_text("\n".join(parts), encoding="utf-8")

@@ -18,6 +18,10 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from .project_map import SCHEMA as MAP_SCHEMA, install_routes as install_map_routes
+from .modules import SCHEMA as MODULE_SCHEMA, install_routes as install_module_routes, project_modules
+from .integrations import SCHEMA as INTEGRATION_SCHEMA, install_routes as install_integration_routes, enqueue as enqueue_integrations
+from .releases import SCHEMA as RELEASE_SCHEMA, ReleasePatch, install_routes as install_release_routes
 
 ROOT = Path(__file__).resolve().parents[1]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
@@ -148,7 +152,14 @@ class ChangeCreate(Write):
 
 class AgentCreate(Write):
     name: Text
-    kind: Literal["codex", "claude"]
+    kind: Literal["codex", "claude", "custom"] = "custom"
+    issue_token: bool = True
+
+
+class ConnectorConfig(StrictModel):
+    client: Literal["codex", "claude", "cursor", "vscode", "cline", "generic"]
+    agent_id: Text
+    token_file: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2048)] | None = None
 
 
 SCHEMA = """
@@ -179,7 +190,7 @@ class Store:
         self.credentials_file = self.data_dir / "connector-secrets.json"
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
-            db.executescript(SCHEMA)
+            db.executescript(SCHEMA + MAP_SCHEMA + MODULE_SCHEMA + INTEGRATION_SCHEMA + RELEASE_SCHEMA)
         issued = {}
         with self.transaction() as db:
             for agent_id, name, kind in [("human", "Вы", "human"), ("codex", "Codex", "codex"), ("claude", "Claude Code", "claude")]:
@@ -257,8 +268,14 @@ class Store:
         return event
 
     @classmethod
-    def events(cls, db, where="", args=(), tail: int | None = None):
-        query = f"SELECT * FROM events {where} ORDER BY id DESC"
+    def events(cls, db, where="", args=(), tail: int | None = None, *, summary=False):
+        columns = "*"
+        if summary:
+            # Polling avoids decoding document bodies; history/export keep the complete audit.
+            columns = "id,project_id,task_id,entity_type,entity_id,action,actor_id,actor_name,actor_kind,reason,created_at,session_id," + ",".join(
+                f"CASE WHEN entity_type='project_module' THEN json_remove({field},'$.content') WHEN entity_type='project_release' THEN json_remove({field},'$.changelog') ELSE {field} END AS {field}"
+                for field in ("before_json", "after_json"))
+        query = f"SELECT {columns} FROM events {where} ORDER BY id DESC"
         if tail:
             query += " LIMIT ?"
             args = (*args, tail)
@@ -267,12 +284,14 @@ class Store:
     @staticmethod
     def record(db, actor, reason, entity_type, entity_id, action, before, after, project_id=None, task_id=None, session_id=None):
         db.execute("INSERT INTO events(project_id,task_id,entity_type,entity_id,action,actor_id,actor_name,actor_kind,reason,before_json,after_json,created_at,session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (project_id, task_id, entity_type, entity_id, action, actor["id"], actor["name"], actor["kind"], reason, encode(before) if before is not None else None, encode(after) if after is not None else None, now(), session_id))
+        if project_id and (action == "project.updated" or entity_type in {"project_map", "project_module"}):
+            enqueue_integrations(db, project_id)
 
     def write(self, actor, scope, model, operation):
         payload = model.model_dump(exclude={"idempotency_key"})
         if isinstance(model, TaskPatch) and "subproject_id" not in model.changes.model_fields_set:
             payload["changes"].pop("subproject_id", None)
-        elif isinstance(model, SubprojectPatch):
+        elif isinstance(model, (SubprojectPatch, ReleasePatch)):
             payload["changes"] = model.changes.model_dump(exclude_unset=True)
         with self.transaction() as db:
             if model.idempotency_key:
@@ -457,7 +476,7 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
     def bootstrap():
         with store.connect() as db:
             db.execute("BEGIN")
-            return {"projects": store.entities(db, "projects"), "agents": store.agents(db), "activity": store.events(db, tail=50)}
+            return {"projects": store.entities(db, "projects"), "agents": store.agents(db), "activity": store.events(db, tail=50, summary=True)}
 
     @app.get("/api/projects/{project_id}", dependencies=[Depends(authenticated_read)])
     def board(project_id: str):
@@ -465,7 +484,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             db.execute("BEGIN")
             project = store.entity(db, "projects", project_id)
             sections = store.entities(db, "sections", "WHERE project_id=?", (project_id,))
-            return {"project": project, "sections": [item for item in sections if item.get("kind") != "subproject"], "subprojects": [item for item in sections if item.get("kind") == "subproject"], "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "activity": store.events(db, "WHERE project_id=?", (project_id,), tail=100)}
+            modules = [{key: item[key] for key in ("id", "name", "kind", "enabled", "version")} for item in project_modules(db, project_id, summary=True)]
+            return {"project": project, "sections": [item for item in sections if item.get("kind") != "subproject"], "subprojects": [item for item in sections if item.get("kind") == "subproject"], "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "activity": store.events(db, "WHERE project_id=?", (project_id,), tail=100, summary=True), "modules": modules}
 
     @app.post("/api/projects")
     def create_project(body: ProjectCreate, request: Request, who=Depends(actor)):
@@ -617,8 +637,15 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
         return add_note(task_id, body, who, session(request), "change", body.summary, metadata, "changes")
 
     @app.get("/api/history", dependencies=[Depends(authenticated_read)])
-    def history(project_id: str | None = None, task_id: str | None = None, after: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500)):
+    def history(project_id: str | None = None, task_id: str | None = None, after: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500), order: Literal["asc", "desc"] = "asc", before: int | None = Query(default=None, ge=1)):
+        if before is not None and order != "desc":
+            raise HTTPException(422, "Параметр before доступен только для order=desc")
+        if after and order == "desc":
+            raise HTTPException(422, "Параметр after доступен только для order=asc")
         where, args = ["id>?"], [after]
+        if before is not None:
+            where.append("id<?")
+            args.append(before)
         with store.connect() as db:
             if project_id:
                 store.entity(db, "projects", project_id)
@@ -630,8 +657,8 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
                     raise HTTPException(422, "Задача не принадлежит указанному проекту")
                 where.append("task_id=?")
                 args.append(task_id)
-            events = [store.event(row) for row in db.execute("SELECT * FROM events WHERE " + " AND ".join(where) + " ORDER BY id LIMIT ?", (*args, limit))]
-            return {"events": events, "next_cursor": events[-1]["id"] if events else after}
+            events = [store.event(row) for row in db.execute("SELECT * FROM events WHERE " + " AND ".join(where) + f" ORDER BY id {order} LIMIT ?", (*args, limit))]
+            return {"events": events, "next_cursor": events[-1]["id"] if events else before or after}
 
     @app.get("/api/projects/{project_id}/export", dependencies=[Depends(authenticated_read)])
     def export(project_id: str):
@@ -641,28 +668,64 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             result = {"schema_version": 1, "exported_at": now(), "project": store.entity(db, "projects", project_id), "sections": store.entities(db, "sections", "WHERE project_id=?", (project_id,)), "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "notes": store.entities(db, "notes", "WHERE project_id=?", (project_id,)), "events": list(reversed(store.events(db, "WHERE project_id=?", (project_id,))))}
             result["subprojects"] = [item for item in result["sections"] if item.get("kind") == "subproject"]
             result["sections"] = [item for item in result["sections"] if item.get("kind") != "subproject"]
+            result['project_map'] = next(iter(store.entities(db, 'project_maps', 'WHERE id=?', (project_id,))), None)
+            result['project_map_revisions'] = [json.loads(row['payload']) for row in db.execute('SELECT payload FROM project_map_revisions WHERE project_id=? ORDER BY version', (project_id,))]
+            result['modules'] = project_modules(db, project_id)
+            result['releases'] = store.entities(db, 'project_releases', 'WHERE project_id=?', (project_id,))
             return JSONResponse(result, headers={"Content-Disposition": f'attachment; filename="agentboard-{project_id}.json"'})
 
     @app.get("/api/connectors", dependencies=[Depends(authenticated_read)])
     def connectors():
+        from connectors.presets import client_profiles
         with store.connect() as db:
             installed = bool(getattr(sys, "frozen", False))
-            command = Path(sys.executable).with_name("AgentboardMCP.exe") if installed else Path(sys.executable)
-            return {"base_url": base_url, "python_command": str(command.resolve()), "mcp_script": "--mcp" if installed else str((ROOT / "connectors" / "mcp_server.py").resolve()), "data_dir": str(store.data_dir), "desktop": installed, "credentials_file": str(store.credentials_file), "agents": store.agents(db)}
+            from desktop.runtime import binary_name
+            command = Path(sys.executable).with_name(binary_name("AgentboardMCP")) if installed else Path(sys.executable)
+            return {"base_url": base_url, "python_command": str(command.resolve()), "mcp_script": "--mcp" if installed else str((ROOT / "connectors" / "mcp_server.py").resolve()), "data_dir": str(store.data_dir), "desktop": installed, "credentials_file": str(store.credentials_file), "agents": store.agents(db), "client_profiles": client_profiles()}
+
+    @app.post("/api/connectors/config")
+    def connector_config(body: ConnectorConfig, who=Depends(actor)):
+        if who["kind"] != "human":
+            raise HTTPException(403, "Конфигурацию подключения создает человек")
+        with store.connect() as db:
+            if not db.execute("SELECT 1 FROM agents WHERE id=? AND kind!='human'", (body.agent_id,)).fetchone():
+                raise HTTPException(404, "Агент не найден")
+        if body.token_file is not None and (not Path(body.token_file).is_absolute() or any(c in body.token_file for c in "\r\n\0")):
+            raise HTTPException(422, "Укажите абсолютный путь к файлу токена")
+        if body.agent_id not in {"codex", "claude"} and body.token_file is None:
+            raise HTTPException(422, "Для отдельной идентичности нужен файл выданного токена")
+        from connectors.presets import render_config
+        from desktop.runtime import binary_name
+        installed = bool(getattr(sys, "frozen", False))
+        command = Path(sys.executable).with_name(binary_name("AgentboardMCP")) if installed else Path(sys.executable)
+        args = ["--mcp" if installed else str((ROOT / "connectors" / "mcp_server.py").resolve()),
+                "--agent", body.agent_id, "--credentials", str(store.credentials_file),
+                *(["--data-dir", str(store.data_dir)] if installed else ["--url", base_url])]
+        if body.token_file is not None:
+            args += ["--token-file", body.token_file]
+        return render_config(body.client, {"command": str(command.resolve()), "args": args})
 
     @app.post("/api/agents")
     def create_agent(body: AgentCreate, request: Request, who=Depends(actor)):
         if who["kind"] != "human":
-            raise HTTPException(403, "Только человек может выпускать токены для агентов")
-        if body.idempotency_key:
+            raise HTTPException(403, "Только человек может добавлять исполнителей и выпускать токены")
+        if body.issue_token and body.idempotency_key:
             raise HTTPException(422, "Выдача токена одноразовая: idempotency_key здесь не поддерживается")
-        with store.transaction() as db:
-            token, agent_id = secrets.token_urlsafe(32), str(uuid4())
-            db.execute("INSERT INTO agents VALUES (?,?,?,?,?,?)", (agent_id, body.name, body.kind, store.hash(token), None, now()))
+        def operation(db):
+            token, agent_id = secrets.token_urlsafe(32) if body.issue_token else None, str(uuid4())
+            db.execute("INSERT INTO agents VALUES (?,?,?,?,?,?)", (agent_id, body.name, body.kind, store.hash(token) if token else None, None, now()))
             agent = next(item for item in store.agents(db) if item["id"] == agent_id)
             store.record(db, who, body.reason, "agent", agent_id, "agent.created", None, agent, session_id=session(request))
             return {"agent": agent, "token": token}
+        if not body.issue_token:
+            return store.write(who, "/api/agents", body, operation)
+        with store.transaction() as db:
+            return operation(db)
 
+    install_map_routes(app, store, actor, authenticated_read, session)
+    install_module_routes(app, store, actor, authenticated_read, session)
+    install_integration_routes(app, store, actor, authenticated_read, session)
+    install_release_routes(app, store, actor, authenticated_read, session)
     dist = ROOT / "dist"
 
     @app.get("/{path:path}", include_in_schema=False)
@@ -671,10 +734,10 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             raise HTTPException(404, "API маршрут не найден")
         candidate = (dist / path).resolve()
         if candidate.is_relative_to(dist.resolve()) and candidate.is_file():
-            return FileResponse(candidate)
+            return FileResponse(candidate, headers={"Cache-Control": "no-cache"} if candidate.suffix == ".html" else None)
         index = dist / "index.html"
         if index.is_file():
-            return FileResponse(index)
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
         return JSONResponse(status_code=404, content={"detail": "Интерфейс еще не собран. Запустите npm run dev либо npm run build"})
 
     if seed_demo:

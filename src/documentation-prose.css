@@ -1,0 +1,20 @@
+.doc-markdown{font-size:15px;line-height:1.85;overflow-wrap:anywhere}
+.doc-markdown>:first-child{margin-top:0}
+.doc-markdown p,.documentation-view .doc-markdown p{white-space:normal;line-height:1.85;margin:0 0 1em}
+.doc-markdown li,.documentation-view .doc-markdown li{white-space:normal;line-height:1.8;padding-left:3px;margin:4px 0}
+.doc-markdown :is(h1,h2,h3,h4,h5,h6){line-height:1.35;overflow-wrap:anywhere}
+.doc-markdown h3,.documentation-view .doc-markdown h3{font-size:19px;margin:30px 0 12px}
+.doc-markdown h4,.doc-markdown h5,.doc-markdown h6{font-size:16px;margin:24px 0 10px}
+.doc-markdown :is(ul,ol){padding-left:25px;margin:12px 0 22px}
+.doc-markdown :is(ul,ol) :is(ul,ol){margin:6px 0}
+.doc-markdown a{color:var(--accent,#245c37);text-decoration:underline;text-underline-offset:3px}
+.doc-markdown a:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+.doc-markdown code{font:0.88em/1.7 Consolas,'SFMono-Regular',monospace;background:var(--surface,#f0f2f4);padding:2px 5px;border-radius:4px;white-space:pre-wrap;overflow-wrap:anywhere}
+.doc-markdown pre{overflow:auto;padding:16px 18px;background:var(--surface,#f0f2f4);border-radius:8px;white-space:pre;tab-size:2;margin:18px 0;max-width:100%}
+.doc-markdown pre code{padding:0;background:none;white-space:pre;overflow-wrap:normal}
+.doc-markdown blockquote{border-left:1px solid var(--border,#a5aeb7);margin:20px 0;padding:2px 20px;color:var(--muted,#4c5967)}
+.doc-markdown table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse;margin:20px 0;font-size:14px}
+.doc-markdown :is(th,td){border:1px solid var(--border,#d6dce1);padding:10px 14px;text-align:left;min-width:100px}
+.doc-markdown th{font-weight:650;background:var(--surface,#f0f2f4)}
+.doc-markdown hr{border:0;border-top:1px solid var(--border,#d6dce1);margin:28px 0}
+@media print{.doc-markdown pre{white-space:pre-wrap;overflow:visible}.doc-markdown pre code{white-space:pre-wrap;overflow-wrap:anywhere}.doc-markdown table{display:table;width:100%;table-layout:fixed;overflow:visible}.doc-markdown :is(th,td){min-width:0;padding:6px;overflow-wrap:anywhere}.doc-markdown :is(h1,h2,h3,h4){break-after:avoid}}

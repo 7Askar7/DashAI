@@ -11,23 +11,71 @@ exports.run = async function () {
   const directory = process.env.DASHAI_VSCODE_QA;
   assert(directory, 'Run through scripts/vscode_smoke.py with an isolated profile.');
   const write = (name, value) => fs.writeFile(path.join(directory, name), JSON.stringify(value));
+  const native = process.env.DASHAI_NATIVE_SMOKE === '1';
+  const workspaceOnly = process.env.DASHAI_WORKSPACE_SMOKE === '1';
+  const progress = async stage => {
+    if (!native) return;
+    console.log('DashAI native QA:', stage);
+    await write('driver-progress.json', { stage, time: Date.now() });
+  };
+  await progress('driver started');
   // GitHub VSIX keeps the original ID; the Marketplace build is published as dashai.
   const extension = vscode.extensions.getExtension('7askar7.agentboard') || vscode.extensions.getExtension('7askar7.dashai');
   assert(extension, 'VSIX is installed in the isolated extension directory');
-  // VS Code returns a separate API object per extension; stub the installed product's API.
-  const productAPI = createRequire(path.join(extension.extensionPath, 'extension.cjs'))('vscode');
-  const originalSaveDialog = productAPI.window.showSaveDialog;
-  const originalClipboard = await vscode.env.clipboard.readText();
-  productAPI.window.showSaveDialog = async () => vscode.Uri.file(path.join(directory, 'project-export.json'));
-  let lastCommand = 0;
+  // Only the interactive export QA needs to replace the installed product's save dialog.
+  const productAPI = native || workspaceOnly ? null : createRequire(path.join(extension.extensionPath, 'extension.cjs'))('vscode');
+  const originalSaveDialog = productAPI?.window.showSaveDialog;
+  const originalClipboard = native || workspaceOnly ? null : await vscode.env.clipboard.readText();
+  if (productAPI) productAPI.window.showSaveDialog = async options => {
+    const name = path.basename(options.defaultUri.fsPath);
+    return vscode.Uri.file(path.join(directory, name.startsWith('dashai-documentation.') ? name : 'project-export.json'));
+  };
+  let lastCommand = 0, finished = false;
+  const activationTimer = native ? setInterval(() => {
+    write('driver-activation.json', { isActive: extension.isActive, hasExports: extension.isActive && !!extension.exports }).catch(console.error);
+  }, 5000) : null;
   try {
-    const api = await extension.activate();
+    assert(vscode.workspace.isTrusted, 'The isolated local QA workspace is trusted.');
+    assert(extension.packageJSON.activationEvents.includes('onStartupFinished'));
+    assert(extension.packageJSON.contributes.commands.some(command => command.command === 'agentboard.open'));
+    // The QA extension's activate() returns immediately so the workbench can finish
+    // activating every onStartupFinished extension, including the installed product.
+    await progress('waiting for declared startup activation');
+    const startupDeadline = Date.now() + 30000;
+    while (!extension.isActive && Date.now() < startupDeadline) await pause(100);
+    assert(extension.isActive, 'Declared onStartupFinished activation did not complete within 30 seconds.');
+    await progress('opening board through its user command');
     await vscode.commands.executeCommand('agentboard.open');
+    const api = extension.exports;
+    await progress('discovering runtime');
     let runtime = await api.discover();
     assert(runtime && runtime.mode === 'vscode' && runtime.version === extension.packageJSON.version);
-    await vscode.commands.executeCommand('agentboard.connectAgents');
-    assert(await fs.stat(path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, '.mcp.json')));
+    if (!workspaceOnly) {
+      await progress('configuring connectors');
+      await vscode.commands.executeCommand('agentboard.connectAgents');
+      assert(await fs.stat(path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, '.mcp.json')));
+    }
     await write('ready.json', { runtime, vscode: vscode.version, extensionPath: extension.extensionPath });
+    if (native) {
+      const repository = vscode.workspace.workspaceFolders[0].uri.fsPath;
+      const config = JSON.parse(await fs.readFile(path.join(repository, '.mcp.json'), 'utf8')).mcpServers.agentboard;
+      assert.equal(path.basename(config.command), process.platform === 'win32' ? 'AgentboardMCP.exe' : 'AgentboardMCP');
+      assert(!config.command.startsWith(extension.extensionPath), 'Companion has a durable personal path');
+      assert(config.args.includes(runtime.data_dir));
+      assert.equal(runtime.data_dir, process.env.DASHAI_EXPECT_DATA);
+      await progress('stopping runtime');
+      await vscode.commands.executeCommand('agentboard.stop');
+      for (let i = 0; i < 80 && await api.discover(); i++) await pause(250);
+      assert.equal(await api.discover(), null);
+      await progress('restarting runtime');
+      await vscode.commands.executeCommand('agentboard.open');
+      const next = await api.discover();
+      assert(next && next.instance_id !== runtime.instance_id && next.data_dir === runtime.data_dir);
+      await vscode.commands.executeCommand('agentboard.stop');
+      await write('driver-complete.json', { status: 'passed', platform: process.platform, arch: process.arch, vscode: vscode.version });
+      await vscode.commands.executeCommand('workbench.action.quit');
+      return;
+    }
     const deadline = Date.now() + 8 * 60 * 1000;
     while (Date.now() < deadline) {
       await pause(100);
@@ -48,6 +96,10 @@ exports.run = async function () {
         } else if (command.action === 'blocked-stop') {
           await vscode.commands.executeCommand('agentboard.stop');
           assert.equal((await api.discover()).instance_id, runtime.instance_id, 'Active MCP prevents shutdown');
+        } else if (command.action === 'reopen-panel') {
+          await vscode.commands.executeCommand('agentboard.open');
+          await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+          await vscode.commands.executeCommand('agentboard.open');
         } else if (command.action === 'restart') {
           await vscode.commands.executeCommand('agentboard.stop');
           for (let i = 0; i < 80 && await api.discover(); i++) await pause(250);
@@ -61,6 +113,7 @@ exports.run = async function () {
           await vscode.commands.executeCommand('agentboard.stop');
           await write('driver-complete.json', { status: 'passed', vscode: vscode.version });
           await write('reply.json', { id: command.id, status: 'passed' });
+          finished = true;
           return;
         } else throw new Error('Unknown QA action');
         await write('reply.json', { id: command.id, status: 'passed' });
@@ -74,7 +127,11 @@ exports.run = async function () {
     await write('driver-error.json', { error: error.stack || String(error) });
     throw error;
   } finally {
-    productAPI.window.showSaveDialog = originalSaveDialog;
-    await vscode.env.clipboard.writeText(originalClipboard);
+    clearInterval(activationTimer);
+    if (productAPI) productAPI.window.showSaveDialog = originalSaveDialog;
+    if (originalClipboard !== null) await vscode.env.clipboard.writeText(originalClipboard);
+    if (finished) await vscode.commands.executeCommand('workbench.action.quit');
   }
 };
+
+exports.activate = () => { void exports.run().catch(console.error); };

@@ -27,6 +27,24 @@ def post(client, url, payload, headers=BROWSER, expected=200):
     return response.json()
 
 
+def test_frontend_entry_revalidates_after_runtime_update(tmp_path, monkeypatch):
+    import importlib
+    module = importlib.import_module('server.app')
+    (tmp_path / 'package.json').write_bytes((module.ROOT / 'package.json').read_bytes())
+    monkeypatch.setattr(module, 'ROOT', tmp_path)
+    dist = tmp_path / 'dist'
+    (dist / 'assets').mkdir(parents=True)
+    (dist / 'index.html').write_text('<html>new project tabs</html>', encoding='utf-8')
+    (dist / 'assets/versioned.js').write_text('/* hashed asset */', encoding='utf-8')
+    with TestClient(create_app(tmp_path / 'data'), base_url='http://127.0.0.1:8000') as client:
+        for route in ('/', '/?vscode=1', '/index.html', '/project/deep-link'):
+            response = client.get(route)
+            assert response.status_code == 200
+            assert response.headers['cache-control'] == 'no-cache'
+            assert 'new project tabs' in response.text
+        assert 'cache-control' not in client.get('/assets/versioned.js').headers
+
+
 def project_and_section(client, headers=BROWSER):
     project = post(client, "/api/projects", {"name": "Общий dashboard"}, headers)
     section = post(client, f"/api/projects/{project['id']}/sections", {"title": "Коннекторы"}, headers)
@@ -197,6 +215,48 @@ def test_export_pagination_append_only_and_token_isolation(workspace):
         output = client.get(endpoint).text
         assert issued["token"] not in output and "token_hash" not in output
     assert client.get("/api/bootstrap", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_history_latest_first_pages_preserve_delta_sync(workspace):
+    _app, client, agents = workspace
+    assert client.get("/api/history?order=desc").json() == {"events": [], "next_cursor": 0}
+    project, section = project_and_section(client)
+    item = task(client, project, section)
+    task(client, project, section, title="Другая задача")
+    for index in range(105):
+        post(client, f"/api/tasks/{item['id']}/notes", {"kind": "progress", "body": f"Шаг {index}"}, agents["codex"])
+    other_project, other_section = project_and_section(client)
+    foreign = task(client, other_project, other_section)
+    snapshot = client.get(f"/api/projects/{project['id']}/export").json()["events"]
+    params = {"project_id": project["id"], "order": "desc", "limit": 100}
+    first = client.get("/api/history", params=params).json()
+    assert len(first["events"]) == 100
+    assert first["events"] == list(reversed(snapshot))[:100]
+    assert first["next_cursor"] == first["events"][-1]["id"]
+    assert client.get("/api/history?order=desc&limit=1").json()["events"][0]["task_id"] == foreign["id"]
+
+    # A new event between pages must not shift the older page or hide delta updates.
+    post(client, f"/api/tasks/{item['id']}/notes", {"kind": "progress", "body": "Новое событие между страницами"})
+    second = client.get("/api/history", params={**params, "before": first["next_cursor"]}).json()
+    combined = first["events"] + second["events"]
+    assert combined == list(reversed(snapshot))
+    assert len({event["id"] for event in combined}) == len(combined)
+    empty = client.get("/api/history", params={**params, "before": second["next_cursor"]}).json()
+    assert empty == {"events": [], "next_cursor": second["next_cursor"]}
+    delta = client.get("/api/history", params={"project_id": project["id"], "after": first["events"][0]["id"]}).json()
+    assert len(delta["events"]) == 1 and delta["events"][0]["task_id"] == item["id"]
+    ascending = client.get("/api/history", params={"project_id": project["id"], "limit": 500}).json()
+    assert ascending["events"] == snapshot + delta["events"]
+    assert ascending["next_cursor"] == delta["next_cursor"]
+    assert client.get("/api/history", params={"after": delta["next_cursor"]}).json() == {"events": [], "next_cursor": delta["next_cursor"]}
+
+    filtered = client.get("/api/history", params={**params, "task_id": item["id"], "limit": 500}).json()
+    assert filtered["events"] == [event for event in reversed(ascending["events"]) if event["task_id"] == item["id"]]
+    assert client.get("/api/history", params={"order": "desc", "task_id": item["id"], "limit": 500}).json() == filtered
+    assert client.get("/api/history", params={**params, "task_id": foreign["id"]}).status_code == 422
+    for invalid in ["before=1", "order=asc&before=1", "order=desc&after=1", "order=desc&before=0", "order=desc&before=-1", "order=invalid"]:
+        response = client.get("/api/history?" + invalid)
+        assert response.status_code == 422 and isinstance(response.json()["detail"], str)
 
 
 def test_loopback_origin_and_write_authentication(workspace):

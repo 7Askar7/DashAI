@@ -1,13 +1,15 @@
 import {
   useEffect,
+  useCallback,
   useId,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type FormEvent,
   type ReactNode,
 } from "react";
 import {
-  Activity,
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
@@ -23,6 +25,7 @@ import {
   GitBranch,
   History,
   LayoutDashboard,
+  Link2,
   List,
   Menu,
   PanelTop,
@@ -31,6 +34,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   ShieldCheck,
   Sparkles,
   X,
@@ -58,20 +62,27 @@ import {
   type Status,
 } from "./api";
 import KanbanBoard from "./KanbanBoard";
+import PriorityMark from './PriorityMark';
+import ProjectModules from './ProjectModules';
+import ProjectIntegrations from './ProjectIntegrations';
+import ProjectReleases from './ProjectReleases';
+import AssigneeSelect from './AssigneeSelect';
+import './task-review.css';
 import { insideVSCode, hostRequest, writeClipboard } from "./host";
+import { defaultProjectWorkspace, isProjectView as projectView, saveWorkspace, taskFromUrl, taskLink, validId, type ProjectWorkspace, type Workspace, type View } from "./workspace";
+const ProjectMap = lazy(() => import('./ProjectMap'));
 
-type View = "overview" | "board" | "project_history" | "history" | "connectors";
 type Modal =
   | { kind: "project"; project?: Project }
   | { kind: "subproject"; subproject?: Subproject; parent_id?: string }
-  | { kind: "task" };
+  | { kind: "task"; subproject_id?: string };
 const emptyBootstrap: Bootstrap = { projects: [], agents: [], activity: [] };
 const text = (data: FormData, key: string) =>
   String(data.get(key) || "").trim();
 const agentName = (agents: Agent[], id: string | null) =>
   agents.find((a) => a.id === id)?.name || "Не назначен";
 const kindLabel = (kind: string) =>
-  kind === "human" ? "Человек" : kind === "claude" ? "Claude Code" : "Codex";
+  kind === "human" ? "Человек" : kind === "claude" ? "Claude Code" : kind === "codex" ? "Codex" : "Другой агент";
 const fieldLabels:Record<string,string> = {title:'Название',description:'Описание',rationale:'Зачем',acceptance_criteria:'Критерии готовности',status:'Статус',priority:'Приоритет',task_type:'Тип задачи',subproject_id:'Подпроект',parent_id:'Родительский подпроект',assignee_id:'Исполнитель',section_id:'Раздел',depends_on:'Зависимости',claim_owner_id:'Владелец'};
 
 function Avatar({ agent, small = false }: { agent?: Agent; small?: boolean }) {
@@ -86,6 +97,8 @@ function Avatar({ agent, small = false }: { agent?: Agent; small?: boolean }) {
         <Sparkles size={small ? 12 : 15} />
       ) : agent?.kind === "human" ? (
         "В"
+      ) : agent?.kind === 'custom' ? (
+        agent.name.slice(0,1).toLocaleUpperCase()
       ) : (
         "—"
       )}
@@ -101,16 +114,49 @@ function StatusPill({ status }: { status: string }) {
     </span>
   );
 }
+function useFormDraft(busy: boolean) {
+  const form = useRef<HTMLFormElement | null>(null), baseline = useRef("");
+  const snapshot = () => form.current ? JSON.stringify(Array.from(form.current.elements)
+    .filter((field): field is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement =>
+      field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement)
+    .filter(field => field.value && (field.name || field instanceof HTMLInputElement) &&
+      (!(field instanceof HTMLInputElement) || !["checkbox", "radio"].includes(field.type) || field.checked))
+    .map(field => [field.name || field.id, field.value])) : "";
+  const ref = useCallback((node: HTMLFormElement | null) => {
+    form.current = node;
+    baseline.current = snapshot();
+  }, []);
+  const isDirty = () => !!form.current && snapshot() !== baseline.current;
+  useEffect(() => {
+    const leave = (event: BeforeUnloadEvent) => {
+      if (busy || isDirty()) { event.preventDefault(); event.returnValue = ""; }
+    };
+    const check: EventListener = (event) => {
+      const state = (event as CustomEvent<{ busy: boolean; dirty: boolean }>).detail;
+      state.busy ||= busy;
+      state.dirty ||= isDirty();
+    };
+    window.addEventListener("beforeunload", leave);
+    window.addEventListener("dashai:check-navigation", check);
+    return () => {
+      window.removeEventListener("beforeunload", leave);
+      window.removeEventListener("dashai:check-navigation", check);
+    };
+  }, [busy]);
+  return { ref, isDirty, reset: () => { baseline.current = snapshot(); }, form };
+}
 function Dialog({
   title,
   children,
   onClose,
   drawer = false,
+  busy = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   drawer?: boolean;
+  busy?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null),
     label = useId(),
@@ -131,10 +177,10 @@ function Dialog({
       aria-labelledby={label}
       onCancel={(event) => {
         event.preventDefault();
-        closeRef.current();
+        if (!busy) closeRef.current();
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) closeRef.current();
+        if (!busy && e.target === e.currentTarget) closeRef.current();
       }}
     >
       <div className="dialog-inner">
@@ -144,6 +190,7 @@ function Dialog({
             className="icon-button"
             onClick={onClose}
             aria-label="Закрыть"
+            disabled={busy}
           >
             <X size={20} />
           </button>
@@ -251,6 +298,8 @@ function MoveTaskDialog({ task, status, onClose, onOpen, onMoved }: {
     [stale, setStale] = useState(false);
   const key = useRef(crypto.randomUUID());
   const label = (value: Status) => statuses.find((item) => item.value === value)!.label;
+  const draft = useFormDraft(busy);
+  const canDiscard = () => !busy && (!draft.isDirty() || window.confirm("Причина перемещения не сохранена. Продолжить без сохранения?"));
   async function refreshConflict() {
     setBusy(true);
     try {
@@ -269,6 +318,7 @@ function MoveTaskDialog({ task, status, onClose, onOpen, onMoved }: {
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
@@ -285,17 +335,19 @@ function MoveTaskDialog({ task, status, onClose, onOpen, onMoved }: {
       setBusy(false);
     }
   }
-  return <Dialog title="Переместить задачу" onClose={() => { if (!busy) onClose(); }}>
-    <form className="entity-form" onSubmit={submit}>
+  return <Dialog title="Переместить задачу" busy={busy} onClose={() => { if (canDiscard()) onClose(); }}>
+    <form ref={draft.ref} className="entity-form" onSubmit={submit} aria-busy={busy}>
+      <fieldset className="draft-fields" disabled={busy}>
       <p className="move-task-title"><span>{current.short_id}</span>{current.title}</p>
       <div className="move-summary"><StatusPill status={current.status} /><ArrowRight size={17} aria-hidden="true" /><StatusPill status={status} /></div>
       <Field label="Почему перемещаем задачу" name="reason" area required hint="Причина и смена статуса сохранятся в истории. Карточка переместится после подтверждения." />
       {error && <ErrorBox message={error} onRefresh={stale && !busy ? refreshConflict : undefined} />}
       <div className="form-footer move-footer">
-        <button type="button" className="text-button" disabled={busy} onClick={onOpen}>Открыть задачу</button>
-        <button type="button" className="button secondary" disabled={busy} onClick={onClose}>Отмена</button>
+        <button type="button" className="text-button" disabled={busy} onClick={() => { if (canDiscard()) onOpen(); }}>Открыть задачу</button>
+        <button type="button" className="button secondary" disabled={busy} onClick={() => { if (canDiscard()) onClose(); }}>Отмена</button>
         <button type="submit" className="button primary" disabled={busy || stale || current.status === status}>{busy ? "Сохраняем…" : "Переместить"}</button>
       </div>
+      </fieldset>
     </form>
   </Dialog>;
 }
@@ -316,6 +368,10 @@ function EntityForm({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const key = useRef(crypto.randomUUID());
+  const draft = useFormDraft(busy);
+  function requestClose() {
+    if (!busy && (!draft.isDirty() || window.confirm("В форме есть несохранённые изменения. Закрыть без сохранения?"))) onClose();
+  }
   const isProject = modal.kind === "project";
   const isSubproject = modal.kind === "subproject";
   const item = modal.kind === "project" ? modal.project : modal.kind === "subproject" ? modal.subproject : undefined;
@@ -328,6 +384,7 @@ function EntityForm({
     : isSubproject ? item ? "Изменить подпроект" : "Новый подпроект" : "Новая задача";
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy) return;
     setError("");
     setBusy(true);
     const d = new FormData(e.currentTarget),
@@ -391,8 +448,9 @@ function EntityForm({
     }
   }
   return (
-    <Dialog title={title} onClose={onClose}>
-      <form onSubmit={submit} className="entity-form">
+    <Dialog title={title} busy={busy} onClose={requestClose}>
+      <form ref={draft.ref} onSubmit={submit} className="entity-form" aria-busy={busy}>
+        <fieldset className="draft-fields" disabled={busy}>
         <p className="form-intro">
           {isProject
             ? "Отдельная доска, контекст и история для одного проекта."
@@ -444,7 +502,7 @@ function EntityForm({
         ) : (
           <>
             <Field label="Название задачи" name="title" required />
-            <Select label="Подпроект" name="subproject_id">
+            <Select label="Подпроект" name="subproject_id" defaultValue={modal.kind === "task" ? modal.subproject_id || "" : ""}>
               <option value="">Весь проект · без подпроекта</option>
               {options.map((s) => <option key={s.id} value={s.id}>{subprojectPath(subprojects, s.id)}</option>)}
             </Select>
@@ -475,14 +533,7 @@ function EntityForm({
                   </option>
                 ))}
               </Select>
-              <Select label="Исполнитель" name="assignee_id">
-                <option value="">Не назначен</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </Select>
+              <AssigneeSelect agents={agents} disabled={busy}/>
             </div>
             {board && board.tasks.length > 0 && (
               <details className="dependency-picker">
@@ -516,7 +567,7 @@ function EntityForm({
         />
         {error && <ErrorBox message={error} />}
         <div className="form-footer">
-          <button type="button" className="button secondary" onClick={onClose}>
+          <button type="button" className="button secondary" onClick={requestClose}>
             Отмена
           </button>
           <button className="button primary" disabled={busy}>
@@ -524,6 +575,7 @@ function EntityForm({
             <ArrowRight size={16} />
           </button>
         </div>
+        </fieldset>
       </form>
     </Dialog>
   );
@@ -628,6 +680,12 @@ function Events({
                                 depends_on: "Зависимости",
                                 name: "Название",
                                 claim_owner_id: "Владелец",
+                                version_name: "Номер версии",
+                                environment: "Окружение",
+                                released_at: "Дата выпуска",
+                                changelog: "Изменения выпуска",
+                                source_revision: "Commit / tag",
+                                link: "Ссылка",
                               } as Record<string, string>
                             )[k] || k}
                           </dt>
@@ -659,7 +717,7 @@ function Events({
 function formatValue(key: string, value: unknown, agents: Agent[]) {
   if (value == null || value === "") return "—";
   if (key === "status")
-    return statuses.find((s) => s.value === value)?.label || String(value);
+    return statuses.find((s) => s.value === value)?.label || ({draft:'Черновик',released:'Выпущена',rolled_back:'Откачена'} as Record<string,string>)[String(value)] || String(value);
   if (key === "priority")
     return priorities[value as keyof typeof priorities] || String(value);
   if (key === "task_type")
@@ -678,6 +736,7 @@ function TaskDrawer({
   onClose,
   onRefresh,
   onChanged,
+  onCopyLink,
 }: {
   detail: Detail;
   board: Board;
@@ -685,6 +744,7 @@ function TaskDrawer({
   onClose: () => void;
   onRefresh: () => Promise<Detail | null>;
   onChanged: () => Promise<void>;
+  onCopyLink: () => void;
 }) {
   const [edit, setEdit] = useState(false),
     [busy, setBusy] = useState(false),
@@ -696,7 +756,13 @@ function TaskDrawer({
     editBaseline = useRef(task),
     editButton = useRef<HTMLButtonElement>(null);
   const [saveVersion, setSaveVersion] = useState(task.version);
+  const editDraft = useFormDraft(busy), noteDraft = useFormDraft(busy);
+  const latestEvidenceRef = useRef<HTMLElement>(null);
+  function canDiscardDraft() {
+    return !busy && (!(editDraft.isDirty() || noteDraft.isDirty()) || window.confirm("Есть несохранённые изменения. Продолжить без сохранения?"));
+  }
   function beginEdit() {
+    if (!canDiscardDraft()) return;
     editBaseline.current = task;
     setSaveVersion(task.version);
     setError("");
@@ -704,9 +770,12 @@ function TaskDrawer({
     editButton.current?.focus();
   }
   function finishEdit() {
-    editButton.current?.focus();
     setEdit(false);
     setError("");
+    requestAnimationFrame(() => editButton.current?.focus());
+  }
+  function cancelEdit() {
+    if (canDiscardDraft()) finishEdit();
   }
   async function refreshConflict() {
     try {
@@ -729,6 +798,7 @@ function TaskDrawer({
   }
   async function update(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError("");
     const d = new FormData(e.currentTarget);
@@ -776,6 +846,7 @@ function TaskDrawer({
   }
   async function note(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError("");
     const form = e.currentTarget,
@@ -807,6 +878,7 @@ function TaskDrawer({
       );
       noteKey.current = crypto.randomUUID();
       form.reset();
+      noteDraft.reset();
       await onChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -815,8 +887,28 @@ function TaskDrawer({
     }
   }
   const assignee = agents.find((a) => a.id === task.assignee_id);
+  const evidence = detail.notes.filter(note => note.kind === "evidence")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  const waiting = task.depends_on.filter(id => board.tasks.find(item => item.id === id)?.status !== "done");
+  function chooseNoteKind(next: string) {
+    if (busy) return false;
+    const fields = noteDraft.form.current && new FormData(noteDraft.form.current);
+    if (noteKind === "change" && next !== "change" && fields &&
+      ["files", "diff", "commit", "verification"].some(name => text(fields, name)) &&
+      !window.confirm("При смене типа записи несохранённые файлы, diff, commit и результат проверки будут удалены. Продолжить?")) return false;
+    setNoteKind(next);
+    return true;
+  }
+  function showNotes(addEvidence = false) {
+    if (addEvidence && !chooseNoteKind("evidence")) return;
+    requestAnimationFrame(() => {
+      const target = addEvidence ? noteDraft.form.current?.querySelector<HTMLTextAreaElement>("textarea") : latestEvidenceRef.current;
+      target?.scrollIntoView({ block: addEvidence ? "center" : "start" });
+      target?.focus({ preventScroll: true });
+    });
+  }
   return (
-    <Dialog title={task.short_id} onClose={onClose} drawer>
+    <Dialog title={task.short_id} onClose={() => { if (canDiscardDraft()) onClose(); }} busy={busy} drawer>
       <div className="drawer-body">
         <div className="drawer-breadcrumb">
           <FolderKanban size={13} />
@@ -830,12 +922,13 @@ function TaskDrawer({
             ref={editButton}
             className="icon-button"
             onClick={() => {
-              if (edit) finishEdit();
+              if (edit) cancelEdit();
               else beginEdit();
             }}
             aria-label={
               edit ? "Отменить редактирование" : "Редактировать задачу"
             }
+            disabled={busy}
           >
             <Pencil size={17} />
           </button>
@@ -843,10 +936,7 @@ function TaskDrawer({
         <div className="task-properties">
           <StatusPill status={task.status} />
           <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
-          <span className={`priority ${task.priority}`}>
-            <span className="priority-bars">▂▄▆</span>
-            {priorities[task.priority]}
-          </span>
+          <PriorityMark priority={task.priority} label/>
           <span className="assigned">
             <Avatar agent={assignee} small />
             {agentName(agents, task.assignee_id)}
@@ -855,6 +945,9 @@ function TaskDrawer({
         <div className="version-line">
           Версия {task.version} · обновлено {date(task.updated_at)} · МСК
         </div>
+        <button className="button secondary task-copy-link" onClick={onCopyLink} title="Ссылка на задачу в этом локальном пространстве">
+          <Link2 size={15} />Скопировать ссылку на задачу
+        </button>
         {task.claim_owner_id &&
           task.claim_expires_at &&
           new Date(task.claim_expires_at) > new Date() && (
@@ -867,8 +960,26 @@ function TaskDrawer({
               </span>
             </div>
           )}
+        {!edit && <section className="task-review" aria-label="Готовность к завершению">
+          <h4>Результат и проверка</h4>
+          <ul className="task-readiness">
+            <li>{task.acceptance_criteria.trim() ? <CheckCheck size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}<span>{task.acceptance_criteria.trim() ? "Критерии заданы" : "Добавьте критерии готовности"}</span></li>
+            <li>{evidence ? <CheckCheck size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}<span>{evidence ? "Проверка приложена" : "Проверка пока не приложена"}</span></li>
+            {waiting.length > 0 && <li className="task-readiness-waiting"><GitBranch size={15} aria-hidden="true" /><span>Незавершённых зависимостей: {waiting.length}</span></li>}
+          </ul>
+          {evidence ? <div className="latest-evidence">
+            <p className="latest-evidence-body">{evidence.body}</p>
+            <p className="latest-evidence-author">{agentName(agents, evidence.actor_id)} · <time dateTime={evidence.created_at}>{date(evidence.created_at)} · МСК</time></p>
+            <span className="muted">Запись автора; DashAI не выполняет проверки.</span>
+          </div> : <p className="task-review-hint">Перед завершением укажите, что проверили и какой результат получили.</p>}
+          <div className="task-review-actions">
+            <button type="button" className="text-button" disabled={busy} onClick={() => showNotes(!evidence)}>{evidence ? "К записям и проверкам" : "Добавить проверку"}<ArrowRight size={14} aria-hidden="true" /></button>
+            {!task.acceptance_criteria.trim() && <button type="button" className="text-button" disabled={busy} onClick={beginEdit}>Добавить критерии</button>}
+          </div>
+        </section>}
         {edit ? (
-          <form onSubmit={update} className="edit-form">
+          <form ref={editDraft.ref} onSubmit={update} className="edit-form" aria-busy={busy}>
+            <fieldset className="draft-fields" disabled={busy}>
             <Field
               label="Название задачи"
               name="title"
@@ -896,18 +1007,7 @@ function TaskDrawer({
               </Select>
             </div>
             <div className="form-row">
-              <Select
-                label="Исполнитель"
-                name="assignee_id"
-                defaultValue={task.assignee_id || ""}
-              >
-                <option value="">Не назначен</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </Select>
+              <AssigneeSelect agents={agents} defaultValue={task.assignee_id || ""} disabled={busy}/>
               <Select
                 label="Тип задачи"
                 name="task_type"
@@ -969,7 +1069,7 @@ function TaskDrawer({
               <button
                 className="button secondary"
                 type="button"
-                onClick={finishEdit}
+                onClick={cancelEdit}
               >
                 Отмена
               </button>
@@ -977,6 +1077,7 @@ function TaskDrawer({
                 {busy ? "Сохраняем…" : "Сохранить"}
               </button>
             </div>
+            </fieldset>
           </form>
         ) : (
           <>
@@ -1020,7 +1121,7 @@ function TaskDrawer({
                 })}
               </div>
             )}
-            <button className="button secondary wide" onClick={beginEdit}>
+            <button className="button secondary wide" onClick={beginEdit} disabled={busy}>
               <Pencil size={15} />
               Изменить статус или детали
             </button>
@@ -1037,7 +1138,7 @@ function TaskDrawer({
             </p>
           )}
           {detail.notes.map((n) => (
-            <article className={`note ${n.kind}`} key={n.id}>
+            <article className={`note ${n.kind}`} key={n.id} ref={n.id === evidence?.id ? latestEvidenceRef : undefined} tabIndex={n.id === evidence?.id ? -1 : undefined}>
               <div className="note-head">
                 <span>{noteLabels[n.kind] || n.kind}</span>
                 <time>{date(n.created_at)}</time>
@@ -1077,10 +1178,11 @@ function TaskDrawer({
           ))}
         </div>
         {!edit && (
-          <form className="note-form" onSubmit={note}>
+          <form ref={noteDraft.ref} className="note-form" onSubmit={note} aria-busy={busy}>
+            <fieldset className="draft-fields" disabled={busy}>
             <div className="field">
               <label htmlFor={`note-kind-${task.id}`}>Добавить запись</label>
-              <select id={`note-kind-${task.id}`} value={noteKind} onChange={event => setNoteKind(event.target.value)}>
+              <select id={`note-kind-${task.id}`} value={noteKind} onChange={event => chooseNoteKind(event.target.value)}>
                 {Object.entries(noteLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </div>
@@ -1120,6 +1222,7 @@ function TaskDrawer({
               <Plus size={15} />
               {busy ? "Сохраняем…" : "Добавить в историю"}
             </button>
+            </fieldset>
           </form>
         )}
         <div className="detail-section">
@@ -1153,11 +1256,21 @@ function ConnectorView({
     } | null>(null),
     [busy, setBusy] = useState(false),
     [copied, setCopied] = useState("");
+  const [client,setClient]=useState('codex'),[identity,setIdentity]=useState('codex'),[tokenFile,setTokenFile]=useState('');
+  const [issuedAgents,setIssuedAgents]=useState<Agent[]>([]);
+  const [generated,setGenerated]=useState<{filename:string;format:string;content:string}|null>(null),[configError,setConfigError]=useState(''),[configBusy,setConfigBusy]=useState(false);
   useEffect(() => {
     api<Connectors>("/connectors")
       .then(setInfo)
       .catch((e) => setError(e.message));
   }, []);
+  useEffect(()=>{
+    if(!info)return;
+    if(!['codex','claude'].includes(identity)&&!tokenFile.trim()){setGenerated(null);setConfigError('Укажите путь к локальному JSON-файлу с выданным токеном.');setConfigBusy(false);return;}
+    let cancelled=false;setConfigBusy(true);setConfigError('');
+    const timer=setTimeout(()=>{api<{filename:string;format:string;content:string}>('/connectors/config',{method:'POST',body:JSON.stringify({client,agent_id:identity,...(tokenFile.trim()?{token_file:tokenFile.trim()}:{})})}).then(value=>{if(!cancelled)setGenerated(value);}).catch(error=>{if(!cancelled){setConfigError(error.message);setGenerated(null);}}).finally(()=>{if(!cancelled)setConfigBusy(false);});},250);
+    return()=>{cancelled=true;clearTimeout(timer);};
+  },[info,client,identity,tokenFile]);
   async function copy(value: string, id: string) {
     try {
       await writeClipboard(value);
@@ -1175,16 +1288,15 @@ function ConnectorView({
     setError("");
     const d = new FormData(e.currentTarget);
     try {
-      setCredential(
-        await api("/agents", {
+      const created = await api<{agent:Agent;token:string}>("/agents", {
           method: "POST",
           body: JSON.stringify({
             name: text(d, "name"),
             kind: text(d, "kind"),
             reason: text(d, "reason"),
           }),
-        }),
-      );
+        });
+      setCredential(created);setIssuedAgents(previous=>[...previous,created.agent]);setIdentity(created.agent.id);setTokenFile('');
       setNewAgent(false);
       notify("Агент создан. Сохраните его токен.");
     } catch (e) {
@@ -1193,50 +1305,19 @@ function ConnectorView({
       setBusy(false);
     }
   }
-  const entries =
-    info &&
-    (["codex", "claude"] as const).map((kind) => {
-      const args = [
-        info.mcp_script,
-        "--agent",
-        kind,
-        "--credentials",
-        info.credentials_file,
-        info.desktop ? "--data-dir" : "--url",
-        info.desktop ? info.data_dir : info.base_url,
-      ];
-      const config =
-        kind === "codex"
-          ? `[mcp_servers.agentboard]\ncommand = ${JSON.stringify(info.python_command)}\nargs = ${JSON.stringify(args)}\nstartup_timeout_sec = 20\ntool_timeout_sec = 60`
-          : JSON.stringify(
-              {
-                mcpServers: {
-                  agentboard: {
-                    type: "stdio",
-                    command: info.python_command,
-                    args,
-                  },
-                },
-              },
-              null,
-              2,
-            );
-      return { kind, config };
-    });
+  const knownAgents=agents.filter(agent=>agent.kind!=='human');
+  knownAgents.push(...issuedAgents.filter(agent=>!knownAgents.some(existing=>existing.id===agent.id)));
+  const currentAgent=knownAgents.find(agent=>agent.id===identity);
   return (
     <div className="connectors-page">
-      <div className="page-kicker">
-        <Plug size={15} />
-        ОБЩИЙ КОНТЕКСТ
-      </div>
       <div className="page-heading">
         <div>
           <h1>
             Подключите ваших агентов<span className="heading-dot">.</span>
           </h1>
           <p>
-            Codex и Claude Code работают на одной доске. Каждое действие
-            оставляет след.
+            Любые агенты с поддержкой MCP работают на общей доске. Имя модели и
+            формат конфигурации клиента выбираются отдельно.
           </p>
         </div>
         <button className="button secondary" onClick={() => setNewAgent(true)}>
@@ -1250,68 +1331,23 @@ function ConnectorView({
         <div>
           <strong>Ваш компьютер. Ваша история.</strong>
           <p>
-            Коннектор общается с локальным API. Ключи OpenAI и Anthropic для
-            dashboard не нужны.
+            Коннектор общается с локальным API. Dashboard не запускает модели
+            и не требует ключей их провайдеров.
           </p>
         </div>
         <span className="local-badge">LOCAL / MCP</span>
       </div>
-      <div className="connector-grid">
-        {entries?.map(({ kind, config }) => {
-          const agent = agents.find((a) => a.id === kind);
-          return (
-            <article className={`connector-card ${kind}`} key={kind}>
-              <div className="connector-title">
-                <Avatar agent={agent} />
-                <div>
-                  <h2>{kindLabel(kind)}</h2>
-                  <span>Стандартный MCP · stdio</span>
-                </div>
-                <span className="client-tag">
-                  {kind === "codex" ? "01" : "02"}
-                </span>
-              </div>
-              <div className="connection-status">
-                <span
-                  className={`status-dot ${agent?.last_seen ? "seen" : ""}`}
-                />
-                {agent?.last_seen
-                  ? `Последний запрос ${date(agent.last_seen)}`
-                  : "Запросов пока нет"}
-              </div>
-              <p>
-                Добавьте конфигурацию в{" "}
-                <code>
-                  {kind === "codex" ? ".codex/config.toml" : ".mcp.json"}
-                </code>{" "}
-                нужного проекта.
-              </p>
-              <div className="code-block">
-                <div className="code-label">
-                  {kind === "codex" ? "TOML" : "JSON"}
-                  <button
-                    onClick={() => copy(config, kind)}
-                    aria-label={`Скопировать конфигурацию ${kindLabel(kind)}`}
-                  >
-                    {copied === kind ? (
-                      <Check size={15} />
-                    ) : (
-                      <Clipboard size={15} />
-                    )}{" "}
-                    {copied === kind ? "Скопировано" : "Копировать"}
-                  </button>
-                </div>
-                <pre>{config}</pre>
-              </div>
-              <p className="connector-hint">
-                {kind === "codex"
-                  ? "Откройте доверенный проект в новой сессии Codex и проверьте /mcp."
-                  : "Откройте проект в Claude Code, разрешите project MCP и проверьте /mcp."}
-              </p>
-            </article>
-          );
-        })}
-      </div>
+      {info&&<section className="connector-configurator" aria-label="Генератор MCP-конфигурации"><h2>Готовая конфигурация для вашего клиента</h2>
+        <div className="connector-config-controls"><label>Приложение / MCP-клиент<select value={client} onChange={event=>setClient(event.target.value)}>{info.client_profiles.map(profile=><option key={profile.id} value={profile.id}>{profile.label}</option>)}</select></label>
+        <label>Имя агента в истории<select value={identity} onChange={event=>{setIdentity(event.target.value);setTokenFile('');}}>{knownAgents.map(agent=><option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+        <label className="wide">Путь к JSON-файлу токена {['codex','claude'].includes(identity)&&'(необязательно для стандартной идентичности)'}<input value={tokenFile} onChange={event=>setTokenFile(event.target.value)} placeholder={insideVSCode?'Абсолютный путь на вашем компьютере':'Например, /Users/me/.config/dashai/qwen.json'} spellCheck={false}/></label></div>
+        <p className="connector-hint">Модель можно назвать как угодно: Qwen, Gemini, локальный агент или имя команды. Создайте отдельную идентичность, чтобы её действия различались в истории.</p>
+        {configError&&<ErrorBox message={configError}/>}
+        {configBusy&&<p className="muted" role="status">Формируем конфигурацию…</p>}
+        {generated&&!configBusy&&<><p>{client==='cline'?<>В Cline откройте MCP Servers → Configure MCP Servers и добавьте сервер в открытые настройки, сохранив остальные записи.</>:client==='generic'?<>Вставьте объект <code>command</code> и <code>args</code> в настройки локального stdio MCP своего клиента. Имя и расположение файла определяет клиент.</>:<>Добавьте настройки в <code>{generated.filename}</code> нужного проекта, сохранив остальные MCP-серверы.</>}</p><div className="code-block"><div className="code-label">{generated.format}<button onClick={()=>copy(generated.content,'generated')} aria-label="Скопировать MCP-конфигурацию">{copied==='generated'?<Check size={15}/>:<Clipboard size={15}/>} {copied==='generated'?'Скопировано':'Копировать'}</button></div><pre>{generated.content}</pre></div></>}
+        <div className="connection-status"><span className={`status-dot ${currentAgent?.last_seen?'seen':''}`}/>{currentAgent?.last_seen?`Последний запрос ${date(currentAgent.last_seen)}`:'Запросов пока нет'}</div>
+        <p className="connector-hint">Перезапустите MCP-сессию клиента и разрешите доступ к этому проекту. Конфигурация сама по себе не подтверждает подключение; первый реальный запрос появится в статусе агента.</p>
+      </section>}
       {!info && !error && (
         <div className="loading">
           <RefreshCw size={18} />
@@ -1379,8 +1415,9 @@ function ConnectorView({
               Для нескольких экземпляров создавайте отдельные токены. Тогда
               история покажет, какой агент внес правку.
             </p>
-            <Field label="Имя агента" name="name" required />
-            <Select label="Клиент" name="kind" defaultValue="codex">
+            <Field label="Имя модели или агента" name="name" required hint="Например, Qwen · ревью проекта" />
+            <Select label="Тип идентичности" name="kind" defaultValue="custom">
+              <option value="custom">Другая модель / свой агент</option>
               <option value="codex">Codex</option>
               <option value="claude">Claude Code</option>
             </Select>
@@ -1426,8 +1463,7 @@ function ConnectorView({
             </div>
             <p className="scope-note">
               В args коннектора используйте --token-file &lt;абсолютный путь&gt;
-              вместо --credentials, сохранив --agent codex или --agent claude. Идентичность определяется токеном
-              на сервере.
+              вместо --credentials и --agent {credential.agent.id}. Выберите эту идентичность в генераторе выше. Имя и права определяются токеном на сервере.
             </p>
             <button
               className="button primary"
@@ -1442,15 +1478,15 @@ function ConnectorView({
   );
 }
 
-export default function App() {
+export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: { initialWorkspace: Workspace; initialWorkspaceWarning?: string }) {
+  const initialProject = initialWorkspace.projects[initialWorkspace.projectId || ""] || defaultProjectWorkspace;
   const [bootstrap, setBootstrap] = useState(emptyBootstrap),
     [board, setBoard] = useState<Board | null>(null),
-    [projectId, setProjectId] = useState<string | null>(() =>
-      localStorage.getItem("agentboard.project"),
-    ),
-    [view, setView] = useState<View>("board"),
+    [projectId, setProjectId] = useState<string | null>(initialWorkspace.projectId),
+    [view, setViewState] = useState<View>(initialWorkspace.view),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
+    [syncError, setSyncError] = useState(false),
     [syncAt, setSyncAt] = useState<string | null>(null),
     [modal, setModal] = useState<Modal | null>(null),
     [move, setMove] = useState<{ task: Task; status: Status } | null>(null),
@@ -1458,13 +1494,35 @@ export default function App() {
     [drawerBoard, setDrawerBoard] = useState<Board | null>(null),
     [toast, setToast] = useState(""),
     [mobileMenu, setMobileMenu] = useState(false);
-  const [query, setQuery] = useState(""),
-    [taskTypeFilter, setTaskTypeFilter] = useState(""),
-    [subprojectFilter, setSubprojectFilter] = useState(""),
-    [agentFilter, setAgentFilter] = useState(""),
-    [statusFilter, setStatusFilter] = useState(""),
-    [priorityFilter, setPriorityFilter] = useState(""),
-    [listView, setListView] = useState(false),
+  const [mapDirty,setMapDirty]=useState(false);
+  const [workspaceWarning, setWorkspaceWarning] = useState(initialWorkspaceWarning);
+  const [routeTaskId, setRouteTaskId] = useState<string | null>(() => taskFromUrl() ?? initialWorkspace.taskId);
+  const [taskError, setTaskError] = useState("");
+  const [taskAttempt, setTaskAttempt] = useState(0);
+  const savedProjects = useRef({ ...initialWorkspace.projects });
+  const routeIndex = useRef(Number.isInteger(window.history.state?.dashaiIndex) ? window.history.state.dashaiIndex as number : 0),
+    acceptedUrl = useRef(window.location.href), restoringHistory = useRef(false);
+  function canNavigate(includeMap = true) {
+    const state = { busy: false, dirty: false };
+    window.dispatchEvent(new CustomEvent("dashai:check-navigation", { detail: state }));
+    if (state.busy) { notify("Дождитесь завершения сохранения"); return false; }
+    return !(state.dirty || (includeMap && mapDirty)) || window.confirm("Есть несохранённые изменения. Перейти без сохранения?");
+  }
+  function setView(next:View) {
+    const withinMap=['map','architecture','documentation'].includes(view)&&['map','architecture','documentation'].includes(next);
+    if (next === view) return;
+    if (!canNavigate(!withinMap)) return;
+    if (!withinMap) setMapDirty(false);
+    setViewState(next);
+  }
+  const [query, setQuery] = useState(initialProject.query),
+    [taskTypeFilter, setTaskTypeFilter] = useState(initialProject.taskTypeFilter),
+    [subprojectFilter, setSubprojectFilter] = useState(initialProject.subprojectFilter),
+    [agentFilter, setAgentFilter] = useState(initialProject.agentFilter),
+    [statusFilter, setStatusFilter] = useState(initialProject.statusFilter),
+    [priorityFilter, setPriorityFilter] = useState(initialProject.priorityFilter),
+    [filtersOpen, setFiltersOpen] = useState(initialProject.filtersOpen),
+    [listView, setListView] = useState(initialProject.listView),
     [history, setHistory] = useState<Event[]>([]),
     [cursor, setCursor] = useState(0),
     [hasMore, setHasMore] = useState(false),
@@ -1476,7 +1534,7 @@ export default function App() {
     projectRef = useRef(projectId),
     loadSequence = useRef(0),
     detailSequence = useRef(0),
-    detailId = useRef<string|null>(null),
+    detailId = useRef<string|null>(routeTaskId),
     sidebarRef = useRef<HTMLElement>(null),
     menuOpener = useRef<HTMLButtonElement>(null),
     toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1485,6 +1543,90 @@ export default function App() {
     historyBusy = useRef(false);
   historyScope.current = `${view}:${projectId}`;
   projectRef.current = projectId;
+  function applyProject(id: string | null, restoreView = true) {
+    const prefs = savedProjects.current[id || ""] || defaultProjectWorkspace;
+    loadSequence.current++;
+    projectRef.current = id;
+    setProjectId(id);
+    if (restoreView) setViewState(prefs.view);
+    setQuery(prefs.query); setTaskTypeFilter(prefs.taskTypeFilter); setSubprojectFilter(prefs.subprojectFilter);
+    setAgentFilter(prefs.agentFilter); setStatusFilter(prefs.statusFilter); setPriorityFilter(prefs.priorityFilter);
+    setListView(prefs.listView); setFiltersOpen(prefs.filtersOpen);
+  }
+  useEffect(() => {
+    if (loading || (projectId && board?.project.id !== projectId)) return;
+    if (projectId) {
+      const previous = savedProjects.current[projectId] || defaultProjectWorkspace;
+      const prefs: ProjectWorkspace = { view: projectView(view) ? view : previous.view, query, taskTypeFilter,
+        subprojectFilter, agentFilter, statusFilter, priorityFilter, listView, filtersOpen };
+      delete savedProjects.current[projectId];
+      savedProjects.current[projectId] = prefs;
+    }
+    void saveWorkspace({ version: 1, projectId, view, taskId: routeTaskId, projects: savedProjects.current })
+      .catch((error: Error) => setWorkspaceWarning(error.message));
+  }, [projectId, view, query, taskTypeFilter, subprojectFilter, agentFilter, statusFilter, priorityFilter, listView, filtersOpen, routeTaskId, loading, board?.project.id]);
+  useEffect(() => {
+    if (loading || !syncAt || syncError || !board || board.project.id !== projectId) return;
+    if (subprojectFilter && subprojectFilter !== "unassigned" && !board.subprojects.some(item => item.id === subprojectFilter)) setSubprojectFilter("");
+    if (agentFilter && agentFilter !== "unassigned" && !bootstrap.agents.some(item => item.id === agentFilter)) setAgentFilter("");
+  }, [board, bootstrap.agents, projectId, subprojectFilter, agentFilter, loading, syncAt, syncError]);
+  function writeTaskUrl(id: string | null, replace = false) {
+    const url = new URL(window.location.href);
+    if (id === null) url.searchParams.delete("task"); else url.searchParams.set("task", id);
+    if (!replace) routeIndex.current++;
+    window.history[replace ? "replaceState" : "pushState"]({ ...window.history.state, dashaiIndex: routeIndex.current }, "", url);
+    acceptedUrl.current = url.href;
+  }
+  function navigateTask(id: string | null, mode: "push" | "pop" = "push", checked = false) {
+    if (id === routeTaskId) return true;
+    if (!checked && !canNavigate()) return false;
+    detailSequence.current++;
+    detailId.current = id;
+    setDetail(null); setDrawerBoard(null); setTaskError("");
+    setModal(null); setMove(null); setRouteTaskId(id);
+    if (mode === "push") writeTaskUrl(id);
+    return true;
+  }
+  useEffect(() => { writeTaskUrl(routeTaskId, true); }, []);
+  useEffect(() => {
+    const pop = () => {
+      if (restoringHistory.current) { restoringHistory.current = false; return; }
+      const targetIndex = window.history.state?.dashaiIndex;
+      if (navigateTask(taskFromUrl(), "pop")) {
+        routeIndex.current = Number.isInteger(targetIndex) ? targetIndex : 0;
+        acceptedUrl.current = window.location.href;
+      } else if (Number.isInteger(targetIndex) && targetIndex !== routeIndex.current) {
+        restoringHistory.current = true;
+        window.history.go(routeIndex.current - targetIndex);
+      } else {
+        window.history.replaceState({ ...window.history.state, dashaiIndex: routeIndex.current }, "", acceptedUrl.current);
+      }
+    };
+    window.addEventListener("popstate", pop);
+    return () => window.removeEventListener("popstate", pop);
+  });
+  useEffect(() => {
+    const id = routeTaskId, sequence = ++detailSequence.current;
+    detailId.current = id;
+    if (id === null) return;
+    if (!validId(id)) { setTaskError("В ссылке указан некорректный идентификатор задачи."); return; }
+    void (async () => {
+      try {
+        const result = await api<Detail>(`/tasks/${id}`);
+        const context = await api<Board>(`/projects/${result.task.project_id}`);
+        if (sequence !== detailSequence.current) return;
+        if (result.task.project_id !== projectRef.current) {
+          applyProject(result.task.project_id);
+          setMapDirty(false);
+        }
+        setBoard(context); setDrawerBoard(context); setDetail(result);
+      } catch (error) {
+        if (sequence === detailSequence.current) setTaskError(error instanceof ApiError && error.status === 404
+          ? "Задача не найдена. Возможно, ссылка относится к другому локальному пространству." : (error as Error).message);
+      }
+    })();
+    return () => { detailSequence.current++; };
+  }, [routeTaskId, taskAttempt]);
   useEffect(()=>{
     if(!mobileMenu)return;
     const sidebar=sidebarRef.current;
@@ -1520,23 +1662,25 @@ export default function App() {
       const id = data.projects.some((p) => p.id === target)
         ? target
         : data.projects[0]?.id || null;
-      if (id !== projectRef.current) setProjectId(id);
+      if (id !== projectRef.current) { applyProject(id, projectView(view)); return; }
       if (id) {
         const result = await api<Board>(`/projects/${id}`);
         if (sequence !== loadSequence.current) return;
         setBoard(result);
       } else setBoard(null);
       setError("");
+      setSyncError(false);
       setSyncAt(new Date().toISOString());
     } catch (e) {
-      if (sequence === loadSequence.current) setError((e as Error).message);
+      if (sequence === loadSequence.current) {
+        setError((e as Error).message);
+        setSyncError(true);
+      }
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
   }
   useEffect(() => {
-    setSubprojectFilter("");
-    if (projectId) localStorage.setItem("agentboard.project", projectId);
     refresh(projectId);
     const interval = setInterval(() => {
       if (!document.hidden) refresh(projectRef.current, true);
@@ -1545,7 +1689,7 @@ export default function App() {
   }, [projectId]);
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k" && !document.querySelector('dialog[open]')) {
         e.preventDefault();
         searchRef.current?.focus();
       }
@@ -1568,7 +1712,8 @@ export default function App() {
     const selector = document.querySelector<HTMLSelectElement>(`.kanban-card[data-task-id="${CSS.escape(id)}"] select`);
     const target = selector?.getClientRects().length ? selector
       : document.querySelector<HTMLButtonElement>('.kanban-status-nav button[aria-pressed="true"]');
-    target?.focus();
+    const fallback = document.querySelector<HTMLButtonElement>('.board-quick-views button[aria-pressed="true"]') || document.querySelector<HTMLButtonElement>('.filter-toggle');
+    (target?.getClientRects().length ? target : fallback)?.focus();
   }, [move]);
   async function loadHistory(reset = false) {
     if (historyBusy.current && !reset) return;
@@ -1578,7 +1723,7 @@ export default function App() {
     setHistoryLoading(true);
     try {
       const result = await api<{ events: Event[]; next_cursor: number }>(
-        `/history?after=${reset ? 0 : cursor}&limit=100${view === "project_history" && projectId ? `&project_id=${projectId}` : ""}`,
+        `/history?order=desc${!reset && cursor ? `&before=${cursor}` : ""}&limit=100${view === "project_history" && projectId ? `&project_id=${projectId}` : ""}`,
       );
       if (
         sequence !== historySequence.current ||
@@ -1611,35 +1756,26 @@ export default function App() {
     }
   }
   function selectProject(id: string) {
-    setProjectId(id);
-    setView("board");
-    setQuery("");
-    setTaskTypeFilter("");
-    setAgentFilter("");
-    setStatusFilter("");
-    setPriorityFilter("");
+    if (id === projectId && projectView(view)) { setMobileMenu(false); return; }
+    if (!canNavigate()) return;
+    setMapDirty(false);
+    applyProject(id);
     setMobileMenu(false);
     setMove(null);
-    closeDetail();
+    navigateTask(null, "push", true);
   }
   function closeDetail() {
-    detailSequence.current++;
-    detailId.current=null;
-    setDetail(null);
-    setDrawerBoard(null);
+    navigateTask(null, "push", true);
   }
-  async function openTask(id: string) {
-    const sequence=++detailSequence.current;
-    detailId.current=id;
+  function openTask(id: string) {
+    navigateTask(id);
+  }
+  async function copyTaskLink() {
+    if (!detail) return;
     try {
-      const result = await api<Detail>(`/tasks/${id}`);
-      const context = await api<Board>(`/projects/${result.task.project_id}`);
-      if(sequence!==detailSequence.current||detailId.current!==id)return;
-      setDrawerBoard(context);
-      setDetail(result);
-    } catch (e) {
-      if(sequence===detailSequence.current)notify((e as Error).message);
-    }
+      await writeClipboard(taskLink(detail.task.id));
+      notify("Ссылка на задачу скопирована. Она работает в этом локальном пространстве");
+    } catch { notify("Не удалось скопировать ссылку. Попробуйте ещё раз"); }
   }
   async function updateDetail() {
     if (detail) {
@@ -1670,11 +1806,14 @@ export default function App() {
   }
   async function saved(id?: string, taskId?: string) {
     if (id) {
-      setProjectId(id);
-      setView("board");
+      applyProject(id);
+      setViewState("board");
     }
     await refresh(id || projectRef.current, true);
-    if (taskId) await openTask(taskId);
+    if (taskId) {
+      resetFilters();
+      navigateTask(taskId, "push", true);
+    }
     notify("Сохранено в пространстве");
   }
   async function exportProject() {
@@ -1711,11 +1850,11 @@ export default function App() {
     setPriorityFilter("");
   }
   const filters = !!(
-    query ||
+    query.trim() ||
     taskTypeFilter ||
     subprojectFilter ||
     agentFilter ||
-    (listView && statusFilter) ||
+    statusFilter ||
     priorityFilter
   );
   const tasks =
@@ -1727,14 +1866,15 @@ export default function App() {
           (agentFilter === "unassigned"
             ? !t.assignee_id
             : t.assignee_id === agentFilter)) &&
-        (!listView || !statusFilter || t.status === statusFilter) &&
+        (!statusFilter || t.status === statusFilter) &&
         (!priorityFilter || t.priority === priorityFilter) &&
-        (!query ||
-          `${t.short_id} ${t.title} ${t.description} ${t.rationale} ${taskTypes[t.task_type || "other"]} ${subprojectPath(board?.subprojects || [], t.subproject_id)}`
+        (!query.trim() ||
+          `${t.short_id} ${t.title} ${t.description} ${t.rationale} ${t.acceptance_criteria} ${taskTypes[t.task_type || "other"]} ${subprojectPath(board?.subprojects || [], t.subproject_id)}`
             .toLocaleLowerCase("ru")
-            .includes(query.toLocaleLowerCase("ru"))),
+            .includes(query.trim().toLocaleLowerCase("ru"))),
     ) || [];
-  const isProjectView = view === "board" || view === "project_history";
+  const isProjectView = projectView(view);
+  const featureEnabled = (id:string) => board?.modules?.find(item=>item.id===id)?.enabled ?? ['map','architecture','documentation'].includes(id);
   const project = board?.project;
   return (
     <div className="app-shell">
@@ -1768,6 +1908,7 @@ export default function App() {
         <nav aria-label="Рабочее пространство">
           <button
             className={`nav-item ${view === "overview" ? "active" : ""}`}
+            aria-current={view === "overview" ? "page" : undefined}
             onClick={() => {
               setView("overview");
               setMobileMenu(false);
@@ -1778,6 +1919,7 @@ export default function App() {
           </button>
           <button
             className={`nav-item ${isProjectView ? "active" : ""}`}
+            aria-current={isProjectView ? "page" : undefined}
             onClick={() => {
               setView("board");
               setMobileMenu(false);
@@ -1789,6 +1931,7 @@ export default function App() {
           </button>
           <button
             className={`nav-item ${view === "history" ? "active" : ""}`}
+            aria-current={view === "history" ? "page" : undefined}
             onClick={() => {
               setView("history");
               setMobileMenu(false);
@@ -1799,6 +1942,7 @@ export default function App() {
           </button>
           <button
             className={`nav-item ${view === "connectors" ? "active" : ""}`}
+            aria-current={view === "connectors" ? "page" : undefined}
             onClick={() => {
               setView("connectors");
               setMobileMenu(false);
@@ -1823,6 +1967,7 @@ export default function App() {
             <button
               key={p.id}
               className={`project-nav-item ${isProjectView && projectId === p.id ? "selected" : ""}`}
+              aria-current={isProjectView && projectId === p.id ? "page" : undefined}
               onClick={() => selectProject(p.id)}
             >
               <span
@@ -1848,8 +1993,8 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="local-server">
-            <span className={`status-dot ${error ? "offline" : "seen"}`} />
-            <span>{error ? "Сервер недоступен" : "Локальный сервер"}</span>
+            <span className={`status-dot ${syncError ? "offline" : "seen"}`} />
+            <span>{syncError ? "Не удалось обновить" : "Локальный сервер"}</span>
             <span className="server-port">API</span>
           </div>
           <div className="profile">
@@ -1893,12 +2038,12 @@ export default function App() {
             </strong>
           </div>
           <div className="topbar-right">
-            <span className={`sync-status ${error ? "error" : ""}`}>
+            <span className={`sync-status ${syncError ? "error" : ""}`} title="Последнее обновление проектов и доски">
               <span className="status-dot" />
-              {error
-                ? "Нет связи"
+              {syncError
+                ? "Ошибка обновления"
                 : syncAt
-                  ? `Обновлено ${new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", hour: "2-digit", minute: "2-digit" }).format(new Date(syncAt))}`
+                  ? `Доска · ${new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", hour: "2-digit", minute: "2-digit" }).format(new Date(syncAt))}`
                   : "Подключение…"}
             </span>
             <button
@@ -1917,6 +2062,7 @@ export default function App() {
           className={`main-content ${isProjectView ? "project-content" : ""}`}
         >
           {error && <ErrorBox message={error} onRefresh={() => refresh()} />}
+          {workspaceWarning && <div className="workspace-warning" role="status"><span>{workspaceWarning}</span><button className="icon-button" aria-label="Закрыть предупреждение о настройках" onClick={() => setWorkspaceWarning("")}><X size={16} /></button></div>}
           {loading && !board && (
             <div className="loading">
               <RefreshCw size={20} />
@@ -1966,7 +2112,7 @@ export default function App() {
                   </span>
                   <span>
                     <Plug size={16} />
-                    Codex + Claude Code
+                    Любые MCP-агенты
                   </span>
                 </div>
               </div>
@@ -2015,7 +2161,7 @@ export default function App() {
                     </p>
                     <footer>
                       <span>Открыть доску</span>
-                      <span>v{p.version}</span>
+                      <span>{date(p.updated_at)}</span>
                     </footer>
                   </button>
                 ))}
@@ -2043,14 +2189,6 @@ export default function App() {
             <>
               <div className="project-heading">
                 <div>
-                  <div className="project-kicker">
-                    <span
-                      className="project-color"
-                      style={{ background: project?.color || "#b4f4a5" }}
-                    />
-                    ПРОЕКТ
-                    <span className="project-version">v{project?.version}</span>
-                  </div>
                   <h1>
                     {project?.name}
                     <button
@@ -2061,10 +2199,10 @@ export default function App() {
                       <Pencil size={16} />
                     </button>
                   </h1>
-                  <p>
+                  {view === 'documentation' ? <details className="project-doc-description"><summary>Описание проекта</summary><p>{project?.description || 'Описание проекта пока не заполнено.'}</p></details> : <p>
                     {project?.description ||
                       "Добавьте цель проекта, чтобы агенты понимали контекст работы."}
-                  </p>
+                  </p>}
                   {project?.repository && (
                     <div className="repository">
                       <GitBranch size={13} />
@@ -2086,80 +2224,56 @@ export default function App() {
                   </button>
                   <button
                     className="button primary"
-                    onClick={() => setModal({ kind: "task" })}
+                    onClick={() => setModal({ kind: "task", subproject_id: subprojectFilter === "unassigned" ? "" : subprojectFilter })}
                   >
                     <Plus size={17} />
                     Новая задача
                   </button>
                 </div>
               </div>
-              <div className="project-stats">
-                <span>
-                  <Circle size={13} />
-                  <strong>{board.tasks.length}</strong> задач
-                </span>
-                <span className="stat-active">
-                  <Activity size={13} />
-                  <strong>
-                    {
-                      board.tasks.filter((t) => t.status === "in_progress")
-                        .length
-                    }
-                  </strong>{" "}
-                  в работе
-                </span>
-                <span className="stat-review">
-                  <ShieldCheck size={13} />
-                  <strong>
-                    {board.tasks.filter((t) => t.status === "review").length}
-                  </strong>{" "}
-                  на проверке
-                </span>
-                <span className="stat-blocked">
-                  <GitBranch size={13} />
-                  <strong>
-                    {board.tasks.filter((t) => t.status === "blocked").length}
-                  </strong>{" "}
-                  блокировок
-                </span>
-              </div>
               <div className="project-tabs">
                 <div className="tabs-nav">
                   <button
                     className={view === "board" ? "selected" : ""}
+                    aria-current={view === "board" ? "page" : undefined}
                     onClick={() => setView("board")}
                   >
                     <FolderKanban size={15} />
                     Доска<span className="count">{board.tasks.length}</span>
                   </button>
+                  {(['map','architecture','documentation'] as const).filter(featureEnabled).map(mode=><button key={mode} className={view===mode?'selected':''} aria-current={view===mode?'page':undefined} onClick={()=>setView(mode)}>{mode==='map'?<FileCode2 size={15}/>:mode==='architecture'?<GitBranch size={15}/>:<List size={15}/>}{{map:'Карта проекта',architecture:'Архитектура',documentation:'Документация'}[mode]}</button>)}
+                  {featureEnabled('integrations')&&<button className={view==='integrations'?'selected':''} aria-current={view==='integrations'?'page':undefined} onClick={()=>setView('integrations')}><Plug size={15}/>Интеграции</button>}
+                  {featureEnabled('releases')&&<button className={view==='releases'?'selected':''} aria-current={view==='releases'?'page':undefined} onClick={()=>setView('releases')}><GitBranch size={15}/>Версии</button>}
+                  <button className={view==='modules'?'selected':''} aria-current={view==='modules'?'page':undefined} onClick={()=>setView('modules')}><Blocks size={15}/>Модули</button>
                   <button
                     className={view === "project_history" ? "selected" : ""}
+                    aria-current={view === "project_history" ? "page" : undefined}
                     onClick={() => setView("project_history")}
                   >
                     <History size={15} />
                     История
                   </button>
                 </div>
-                <div className="project-agents">
-                  {bootstrap.agents
-                    .filter((a) => a.kind !== "human")
-                    .slice(0, 4)
-                    .map((a) => (
-                      <span title={a.name} key={a.id}>
-                        <Avatar agent={a} small />
-                      </span>
-                    ))}
-                  <button
-                    className="text-button"
-                    onClick={() => setView("connectors")}
-                  >
-                    Агенты
-                    <ArrowUpRight size={13} />
-                  </button>
-                </div>
               </div>
+              {(view==='map'||view==='architecture'||view==='documentation')&&(featureEnabled(view)||mapDirty)&&<Suspense fallback={<p className="muted">Загрузка карты проекта…</p>}><ProjectMap key={board.project.id} project={board.project} mode={view} onNotify={notify} onDirtyChange={setMapDirty} onShowMap={()=>setView(featureEnabled('map')?'map':'modules')}/></Suspense>}
+              {['map','architecture','documentation','integrations','releases'].includes(view)&&!featureEnabled(view)&&<div className="module-empty"><h2>Этот модуль отключён</h2><p>Данные сохранены. Добавьте модуль обратно, чтобы продолжить работу.</p><button className="button secondary" onClick={()=>setView('modules')}>Модули проекта</button></div>}
+              {view==='modules'&&<ProjectModules key={board.project.id} project={board.project} notify={notify} onChanged={()=>void refresh(projectRef.current,true)} onDirtyChange={setMapDirty} onOpen={mode=>setView(mode as View)}/>}
+              {view==='integrations'&&(featureEnabled('integrations')||mapDirty)&&<ProjectIntegrations key={board.project.id} project={board.project} notify={notify} onDirtyChange={setMapDirty}/>}
+              {view==='releases'&&(featureEnabled('releases')||mapDirty)&&<ProjectReleases key={board.project.id} project={board.project} notify={notify} onDirtyChange={setMapDirty}/>}
               {view === "board" && (
                 <>
+                  <div className="board-quick-views" role="group" aria-label="Быстрые выборки задач">
+                    <button aria-pressed={!filters} onClick={resetFilters}>Все задачи <span>{board.tasks.length}</span></button>
+                    {statuses.filter(s => ['in_progress', 'review', 'blocked'].includes(s.value)).map(s => (
+                      <button key={s.value} aria-pressed={statusFilter === s.value} onClick={() => setStatusFilter(statusFilter === s.value ? "" : s.value)}>
+                        <span className={`status-pill ${s.value}`}><span className="status-dot" />{s.label}</span>
+                        <span>{board.tasks.filter(t => t.status === s.value).length}</span>
+                      </button>
+                    ))}
+                    <button aria-pressed={agentFilter === "unassigned"} onClick={() => setAgentFilter(agentFilter === "unassigned" ? "" : "unassigned")}>
+                      Без исполнителя <span>{board.tasks.filter(t => !t.assignee_id).length}</span>
+                    </button>
+                  </div>
                   {!!board.subprojects?.length && <details className="subprojects-panel">
                     <summary>Подпроекты <span className="count">{board.subprojects.length}</span><span className="muted">Одна доска для всех направлений</span></summary>
                     <div className="subprojects-list">{[...board.subprojects].sort((a, b) => subprojectPath(board.subprojects, a.id).localeCompare(subprojectPath(board.subprojects, b.id), "ru")).map((s) => <div key={s.id}>
@@ -2191,7 +2305,11 @@ export default function App() {
                         <kbd>Ctrl K</kbd>
                       )}
                     </div>
-                    <div className="filter-controls">
+                    <button className="button secondary filter-toggle" aria-expanded={filtersOpen} aria-controls="board-filters" onClick={() => setFiltersOpen(!filtersOpen)}>
+                      <SlidersHorizontal size={15} />Фильтры
+                      {[taskTypeFilter, subprojectFilter, agentFilter, statusFilter, priorityFilter].filter(Boolean).length > 0 && <span className="count">{[taskTypeFilter, subprojectFilter, agentFilter, statusFilter, priorityFilter].filter(Boolean).length}</span>}
+                    </button>
+                    <div className="filter-controls" id="board-filters" hidden={!filtersOpen}>
                       <select aria-label="Фильтр подпроекта" value={subprojectFilter} onChange={(e) => setSubprojectFilter(e.target.value)}>
                         <option value="">Все подпроекты</option><option value="unassigned">Без подпроекта</option>
                         {[...(board.subprojects || [])].sort((a, b) => subprojectPath(board.subprojects || [], a.id).localeCompare(subprojectPath(board.subprojects || [], b.id), "ru")).map((s) => <option key={s.id} value={s.id}>{subprojectPath(board.subprojects || [], s.id)} · с вложенными</option>)}
@@ -2221,7 +2339,7 @@ export default function App() {
                           </option>
                         ))}
                       </select>
-                      {listView && <select
+                      <select
                         aria-label="Фильтр статуса"
                         value={statusFilter}
                         onChange={(e) => setStatusFilter(e.target.value)}
@@ -2232,7 +2350,7 @@ export default function App() {
                             {s.label}
                           </option>
                         ))}
-                      </select>}
+                      </select>
                       <select
                         aria-label="Фильтр приоритета"
                         value={priorityFilter}
@@ -2267,14 +2385,27 @@ export default function App() {
                   </div>
                   {filters && (
                     <div className="filter-summary">
-                      <span>Найдено задач: {tasks.length}</span>
+                      <span role="status">Найдено задач: {tasks.length} из {board.tasks.length}</span>
+                      {statusFilter && <span>{statuses.find(s => s.value === statusFilter)?.label}</span>}
+                      {agentFilter && <span>{agentFilter === "unassigned" ? "Без исполнителя" : agentName(bootstrap.agents, agentFilter)}</span>}
+                      {subprojectFilter && <span>{subprojectFilter === "unassigned" ? "Без подпроекта" : subprojectPath(board.subprojects || [], subprojectFilter)}</span>}
+                      {taskTypeFilter && <span>{taskTypes[taskTypeFilter as keyof typeof taskTypes]}</span>}
+                      {priorityFilter && <span>{priorities[priorityFilter as keyof typeof priorities]}</span>}
                       <button className="text-button" onClick={resetFilters}>
                         <X size={12} />
                         Сбросить фильтры
                       </button>
                     </div>
                   )}
-                  {filters && !tasks.length ? (
+                  {!board.tasks.length ? (
+                    <div className="board-onboarding">
+                      <FolderKanban size={28} aria-hidden="true" />
+                      <h2>С чего начнём этот проект?</h2>
+                      <p>Добавьте первую задачу: что нужно сделать, зачем и какой результат вы ожидаете.</p>
+                      <button className="button primary" onClick={() => setModal({ kind: "task", subproject_id: subprojectFilter === "unassigned" ? "" : subprojectFilter })}><Plus size={16} />Создать первую задачу</button>
+                      <span>Назначение исполнителя сохраняет ответственность. Агент начинает работу в своём MCP-клиенте.</span>
+                    </div>
+                  ) : filters && !tasks.length ? (
                     <div className="empty-board">
                       <Search size={26} />
                       <h2>Задачи не найдены</h2>
@@ -2285,6 +2416,7 @@ export default function App() {
                     </div>
                   ) : !listView ? (
                     <KanbanBoard key={board.project.id} tasks={tasks} agents={bootstrap.agents} subprojects={board.subprojects || []}
+                      statusFilter={statusFilter as Status | ""} filterKey={[query.trim(), taskTypeFilter, subprojectFilter, agentFilter, statusFilter, priorityFilter].join("\n")}
                       onOpen={openTask} onMove={(task, status) => setMove({ task, status })} />
                   ) : (
                     <div className="board is-list">
@@ -2295,10 +2427,7 @@ export default function App() {
                             <button className={`task-card ${task.status}`} key={task.id} onClick={() => openTask(task.id)}>
                               <div className="task-card-top">
                                 <span className="task-id">{task.short_id}</span>
-                                <span className={`priority-symbol ${task.priority}`} title={`Приоритет: ${priorities[task.priority]}`}>
-                                  <span aria-hidden="true">▂▄▆</span>
-                                  <span className="sr-only">{priorities[task.priority]}</span>
-                                </span>
+                                <PriorityMark priority={task.priority}/>
                               </div>
                               <div className="task-list-heading">
                                 <h3>{task.title}</h3>
@@ -2312,7 +2441,7 @@ export default function App() {
                                   <span>{agentName(bootstrap.agents, task.assignee_id)}</span>
                                 </span>
                                 <span className="card-meta" title={`Обновлено ${date(task.updated_at, true)}`}>
-                                  <span>v{task.version}</span>
+                                  <span>{date(task.updated_at)}</span>
                                   {task.depends_on.length > 0 && <GitBranch size={12} />}
                                 </span>
                               </div>
@@ -2364,6 +2493,7 @@ export default function App() {
                   </>
                 )}
                 <div className="history-toolbar">
+                  {view === "project_history" && <button className="button secondary" disabled={historyLoading} onClick={() => loadHistory(true)}><RefreshCw size={15} />Обновить историю</button>}
                   <div className="search-field">
                     <Search size={16} />
                     <input
@@ -2386,7 +2516,7 @@ export default function App() {
                     ))}
                   </select>
                   <span className="muted">
-                    {history.length} событий загружено
+                    {history.length} событий загружено · поиск по загруженным
                   </span>
                 </div>
                 <Events
@@ -2404,9 +2534,10 @@ export default function App() {
                 {hasMore && (
                   <button
                     className="button secondary wide"
+                    disabled={historyLoading}
                     onClick={() => loadHistory()}
                   >
-                    Загрузить следующие события
+                    {historyLoading ? "Загружаем…" : "Загрузить более ранние события"}
                   </button>
                 )}
                 <p className="scope-note">
@@ -2441,7 +2572,7 @@ export default function App() {
       )}
       {move && <MoveTaskDialog key={`${move.task.id}:${move.status}`} task={move.task} status={move.status}
         onClose={() => setMove(null)} onMoved={moved}
-        onOpen={() => { setMove(null); openTask(move.task.id); }} />}
+        onOpen={() => { navigateTask(move.task.id, "push", true); }} />}
       {detail && drawerBoard && (
         <TaskDrawer
           key={detail.task.id}
@@ -2451,8 +2582,13 @@ export default function App() {
           onClose={closeDetail}
           onRefresh={updateDetail}
           onChanged={changed}
+          onCopyLink={copyTaskLink}
         />
       )}
+      {routeTaskId !== null && !detail && <Dialog title={taskError ? "Не удалось открыть задачу" : "Открываем задачу…"} onClose={closeDetail}>
+        {taskError ? <><p role="alert">{taskError}</p><div className="form-actions"><button className="button secondary" onClick={() => { setTaskError(""); setTaskAttempt(value => value + 1); }}>Повторить</button><button className="button primary" onClick={closeDetail}>Закрыть сообщение</button></div></>
+          : <p role="status">Загружаем карточку и её проект…</p>}
+      </Dialog>}
     </div>
   );
 }

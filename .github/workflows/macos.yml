@@ -1,0 +1,87 @@
+name: macOS VS Code packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_run_id:
+        description: 'Reuse native VSIX artifacts from a verified run for GUI-only QA (for example, 38950373566)'
+        required: false
+        type: string
+  push:
+    branches: ['main', 'codex/macos-support', 'codex/project-workspace-1.6', 'codex/project-versions-1.7', 'codex/ux-release-1.7.1']
+  pull_request:
+    paths: ['desktop/**', 'connectors/**', 'server/**', 'vscode-extension/**', 'packaging/**', 'scripts/**', 'tests/**', '*requirements*', '.github/workflows/macos.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        if: ${{ !inputs.package_run_id }}
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Build native runtime and Marketplace VSIX
+        if: ${{ !inputs.package_run_id }}
+        run: bash scripts/build-macos.sh
+      - name: Verify API, MCP, locks and native bundle
+        if: ${{ !inputs.package_run_id }}
+        run: |
+          .venv-build/bin/python -m pytest tests -q
+          unzip -q artifacts/releases/DashAI-Marketplace-*-${{ matrix.target }}.vsix -d build/installed-vsix
+          .venv-build/bin/python scripts/frozen_smoke.py --bundle build/installed-vsix/extension/runtime/Agentboard
+          npm --prefix vscode-extension test
+          codesign --verify --deep --strict build/installed-vsix/extension/runtime/Agentboard/Agentboard
+          codesign --verify --deep --strict build/installed-vsix/extension/runtime/Agentboard/AgentboardMCP
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.package_run_id }}
+        with:
+          name: DashAI-${{ matrix.target }}
+          path: artifacts/releases/DashAI-Marketplace-*-${{ matrix.target }}.vsix
+          if-no-files-found: error
+      - name: Download native VSIX from the requested run
+        if: ${{ inputs.package_run_id }}
+        uses: actions/download-artifact@v4
+        with:
+          name: DashAI-${{ matrix.target }}
+          run-id: ${{ inputs.package_run_id }}
+          github-token: ${{ github.token }}
+          path: artifacts/releases
+      - name: Install GUI test dependencies
+        if: ${{ inputs.package_run_id }}
+        run: npm ci --prefix vscode-extension --ignore-scripts
+      - name: Load packaged extension in native VS Code
+        timeout-minutes: 5
+        run: node vscode-extension/tests/native-smoke.cjs
+      - name: Preserve isolated QA diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DashAI-${{ matrix.target }}-QA
+          path: |
+            artifacts/qa/native-vscode-*/install.log
+            artifacts/qa/native-vscode-*/vscode.log
+            artifacts/qa/native-vscode-*/driver-*.json
+            artifacts/qa/native-vscode-*/profile/logs/**/*.log
+          if-no-files-found: ignore

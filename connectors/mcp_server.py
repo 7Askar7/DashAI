@@ -19,6 +19,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+if __package__ in {None, ''}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from server.project_map import MapFile, MapDiagram
+from server.releases import ReleaseChanges, ReleaseStatus, ReleaseDate, VersionName, Changelog, Link, Revision, Title as ReleaseTitle
 
 ROOT = Path(__file__).resolve().parents[1]
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -46,7 +50,15 @@ INSTRUCTIONS = (
     "task summaries preview dependency IDs (get_task keeps them all), history snapshots/notes preview long text and files. "
     "dashboard export retains full history. All tasks share one project board; choose task_type independently from status. "
     "Use optional subproject_id to group parallel work; create_subproject parent_id links nested workstreams. "
-    "last_seen means last API request, not a running agent session."
+    "last_seen means last API request, not a running agent session. "
+    "For project documentation read get_project_map; publish_project_map submits a complete safe file manifest "
+    "with SHA256 and structured descriptions plus Mermaid diagrams. Exclude credentials, private data, dependencies "
+    "and build outputs. Read source files in your own workspace; the connector never reads the repository. "
+    "Descriptions are drafts; source_revision is the analyzed snapshot, not evidence of current filesystem state. "
+    "Optional project modules are Markdown templates, not executable plugins. Read their current version before changing "
+    "content/enabled state; disabling preserves content. Page module summaries or request a specific module's full content."
+    " Project release records describe reported deployments; they do not perform or verify deployment. Enable the releases "
+    "module before writing. Read the current release version before edits; released/rolled_back records require YYYY-MM-DD."
 )
 
 
@@ -94,7 +106,8 @@ def validate_url(url: str) -> str:
 def default_data_dir() -> Path:
     """Installed clients keep personal state outside the application bundle."""
     if getattr(sys, "frozen", False):
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Agentboard"
+        from desktop.runtime import personal_dir
+        return personal_dir()
     return ROOT / "data"
 
 
@@ -117,11 +130,11 @@ def forwarding_target(data_dir: Path | None, url: str | None) -> Path | None:
     """An old durable VSIX companion follows the current proved runtime next session."""
     if not getattr(sys, "frozen", False) or data_dir is None or url is not None:
         return None
-    from desktop.runtime import VERSION
+    from desktop.runtime import VERSION, binary_name
     from desktop.updates import version_tuple
 
     data_dir = data_dir.resolve()
-    if Path(sys.executable).resolve() != (data_dir / "vscode-runtime" / VERSION / "AgentboardMCP.exe").resolve():
+    if Path(sys.executable).resolve() != (data_dir / "vscode-runtime" / VERSION / binary_name("AgentboardMCP")).resolve():
         return None
     runtime = json.loads((data_dir / "runtime.json").read_text(encoding="utf-8-sig"))
     if not isinstance(runtime, dict) or runtime.get("mode") != "vscode":
@@ -129,7 +142,7 @@ def forwarding_target(data_dir: Path | None, url: str | None) -> Path | None:
     if version_tuple(runtime.get("version")) <= version_tuple(VERSION):
         return None
     directory = data_dir / "vscode-runtime" / runtime["version"]
-    target = directory / "AgentboardMCP.exe"
+    target = directory / binary_name("AgentboardMCP")
     if not isinstance(runtime.get("base_url"), str):
         raise ValueError("Некорректный адрес новой MCP-версии DashAI")
     base_url = validate_url(runtime["base_url"])
@@ -141,7 +154,7 @@ def forwarding_target(data_dir: Path | None, url: str | None) -> Path | None:
             or not isinstance(runtime.get("instance_id"), str) or str(UUID(runtime["instance_id"])) != runtime["instance_id"].lower()
             or type(runtime.get("pid")) is not int or runtime["pid"] <= 0
             or address.hostname != "127.0.0.1" or address.port is None or not 1 <= address.port <= 65535
-            or not target.is_file() or not (directory / "Agentboard.exe").is_file()
+            or not target.is_file() or not (directory / binary_name("Agentboard")).is_file()
             or json.loads((directory / "_internal" / "package.json").read_text(encoding="utf-8"))["version"] != runtime["version"]):
         raise ValueError("Некорректный путь новой MCP-версии DashAI")
     with build_opener(ProxyHandler({}), NoRedirect()).open(
@@ -165,7 +178,10 @@ def load_token(agent: str, credentials: Path, token_file: Path | None = None) ->
         if content.startswith("{"):
             issued = json.loads(content)
             token = issued.get("token")
-            actor_id = issued.get("agent", {}).get("id", agent)
+            identity = issued.get("agent", {})
+            if not isinstance(identity, dict):
+                raise ValueError("Invalid issued agent identity")
+            actor_id = identity.get("id", agent)
         else:
             token, actor_id = content, agent
     elif os.environ.get("AGENTBOARD_TOKEN"):
@@ -180,6 +196,8 @@ def load_token(agent: str, credentials: Path, token_file: Path | None = None) ->
         token, actor_id = entry.get("token"), entry.get("id", agent)
     if not isinstance(token, str) or not token or len(token) > 4096 or "\r" in token or "\n" in token:
         raise ValueError("Agentboard token is missing or invalid")
+    if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 100 or any(c in actor_id for c in "\r\n\0"):
+        raise ValueError("Agentboard identity is missing or invalid")
     return token, actor_id
 
 
@@ -492,12 +510,123 @@ def build_server(base_url: str, token: str, actor_id: str, session_id: str) -> F
         return {"api": api("GET", "/api/health"), "base_url": base_url,
                 "configured_identity": actor_id, "session_id": session_id, "transport": "stdio"}
 
+    @server.tool(annotations=READ)
+    def get_project_map(project_id: Identifier, path: str | None = None, diagram_id: str | None = None,
+                        version: Annotated[int, Field(ge=1)] | None = None,
+                        offset: Annotated[int, Field(ge=0)] = 0, limit: Limit = 50) -> dict[str, Any]:
+        """Read a bounded manifest or one full description/diagram. Read current version before publishing. A past version is immutable."""
+        data = api('GET', entity_path('projects', project_id) + '/map' + (f'?version={version}' if version else ''))
+        result = {k: data.get(k) for k in ('project_id', 'version', 'source_revision', 'updated_at', 'author_name', 'document')}
+        if path is not None:
+            result['file'] = next((f for f in data['files'] if f['path'] == path), None)
+        elif diagram_id is not None:
+            result['diagram'] = next((d for d in data['diagrams'] if d['id'] == diagram_id), None)
+        else:
+            result.update(files=[{k: f.get(k) for k in ('path', 'kind', 'sha256', 'status')} for f in data['files'][offset:offset+limit]],
+                          total_files=len(data['files']), next_offset=offset+limit if offset+limit<len(data['files']) else None,
+                          diagrams=[{k: d.get(k) for k in ('id', 'title', 'notation', 'status')} for d in data['diagrams']])
+        return result
+
+    @server.tool(annotations=READ)
+    def list_modules(module_id: Identifier | None = None, limit: Limit = 20,
+                     offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
+        """Page available module template summaries, or request one full template by ID. Modules never execute code."""
+        modules = api("GET", "/api/modules")["modules"]
+        if module_id is not None:
+            return {"module": next((item for item in modules if item["id"] == module_id), None)}
+        return {"modules": [{key: clipped(value, 500) for key, value in item.items() if key != "template"}
+                            for item in modules[offset:offset + limit]], "total": len(modules),
+                "next_offset": offset + limit if offset + limit < len(modules) else None}
+
+    @server.tool(annotations=READ)
+    def get_project_modules(project_id: Identifier, module_id: Identifier | None = None, limit: Limit = 20,
+                            offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
+        """Page project module summaries and versions, or request one full document by ID. Disabling preserves content."""
+        modules = api("GET", entity_path("projects", project_id) + "/modules")["modules"]
+        if module_id is not None:
+            selected = next((item for item in modules if item["id"] == module_id), None)
+            return {"module": None if selected is None else {key: value for key, value in selected.items() if key != "template"}}
+        return {"modules": [{key: clipped(value, 500) for key, value in item.items() if key not in {"template", "content"}}
+                            for item in modules[offset:offset + limit]], "total": len(modules),
+                "next_offset": offset + limit if offset + limit < len(modules) else None}
+
+    @server.tool(annotations=WRITE)
+    def configure_project_module(project_id: Identifier, module_id: Identifier,
+                                 expected_version: Annotated[int, Field(ge=0)], enabled: bool,
+                                 reason: Reason, idempotency_key: Key,
+                                 content: Annotated[str, Field(max_length=200000)] | None = None) -> dict[str, Any]:
+        """Enable/disable a project module or edit Markdown content with a fresh version. Omit content to preserve it."""
+        body = {"expected_version": expected_version, "enabled": enabled, "reason": reason, "idempotency_key": idempotency_key}
+        if content is not None:
+            body["content"] = content
+        return clipped(api("PUT", entity_path("projects", project_id) + "/modules/" + quote(module_id, safe=""), body))
+
+    @server.tool(annotations=WRITE)
+    def create_module_template(name: Identifier, reason: Reason, idempotency_key: Key,
+                                description: Annotated[str, Field(max_length=3000)] = "",
+                                template: Annotated[str, Field(max_length=100000)] = "") -> dict[str, Any]:
+        """Create a reusable Markdown module template for projects; never installs packages or executes user code."""
+        return clipped(api("POST", "/api/modules", {"name": name, "description": description,
+                       "template": template, "reason": reason, "idempotency_key": idempotency_key}))
+
+    @server.tool(annotations=READ)
+    def list_project_releases(project_id: Identifier, q: Annotated[str, Field(max_length=200)] = "",
+                              status: ReleaseStatus | None = None,
+                              environment: Annotated[str, Field(max_length=100)] | None = None,
+                              offset: Annotated[int, Field(ge=0)] = 0, limit: Limit = 30) -> dict[str, Any]:
+        """Page release summaries and changelog_preview (300 characters). Use get_project_release for full text; hidden modules retain history."""
+        params = {"q": q, "offset": offset, "limit": limit}
+        if status is not None:
+            params["status"] = status
+        if environment is not None:
+            params["environment"] = environment
+        return api("GET", entity_path("projects", project_id) + "/releases?" + urlencode(params))
+
+    @server.tool(annotations=READ)
+    def get_project_release(project_id: Identifier, release_id: Identifier) -> dict[str, Any]:
+        """Read one full release record and its current version. A recorded release is not proof of a live deployment."""
+        return api("GET", entity_path("projects", project_id) + "/releases/" + quote(release_id, safe=""))
+
+    @server.tool(annotations=WRITE)
+    def create_project_release(project_id: Identifier, version_name: VersionName, changelog: Changelog,
+                               reason: Reason, idempotency_key: Key, title: ReleaseTitle = "",
+                               status: ReleaseStatus = "draft", environment: VersionName = "production",
+                               released_at: ReleaseDate | None = None, link: Link = "",
+                               source_revision: Revision = "") -> dict[str, Any]:
+        """Record what changed in a project version. The releases module must be enabled; published/rolled-back records need a calendar date."""
+        return api("POST", entity_path("projects", project_id) + "/releases", {
+            "version_name": version_name, "title": title, "status": status, "environment": environment,
+            "released_at": released_at, "changelog": changelog, "link": link, "source_revision": source_revision,
+            "reason": reason, "idempotency_key": idempotency_key,
+        })
+
+    @server.tool(annotations=WRITE)
+    def update_project_release(project_id: Identifier, release_id: Identifier, expected_version: Version,
+                               changes: ReleaseChanges, reason: Reason, idempotency_key: Key) -> dict[str, Any]:
+        """Update a freshly read release with optimistic version checking. Omitted fields stay intact; a draft's date can be cleared with null."""
+        return api("PATCH", entity_path("projects", project_id) + "/releases/" + quote(release_id, safe=""), {
+            "expected_version": expected_version, "changes": changes.model_dump(exclude_unset=True),
+            "reason": reason, "idempotency_key": idempotency_key,
+        })
+
+    @server.tool(annotations=WRITE)
+    def publish_project_map(project_id: Identifier, expected_version: Annotated[int, Field(ge=0)],
+                            source_revision: Title, files: Annotated[list[MapFile], Field(max_length=10000)],
+                            reason: Reason, idempotency_key: Key,
+                            diagrams: Annotated[list[MapDiagram], Field(max_length=100)] | None = None) -> dict[str, Any]:
+        """Publish complete manifest through the shared HTTP API. Omitted descriptions are preserved and marked stale after hash changes. diagrams=null preserves existing diagrams; [] explicitly clears them. New prose is draft, not verified."""
+        return api('PUT', entity_path('projects', project_id) + '/map', {
+            'expected_version': expected_version, 'source_revision': source_revision,
+            'files': [f.model_dump() for f in files], 'diagrams': [d.model_dump() for d in diagrams] if diagrams is not None else None,
+            'reason': reason, 'idempotency_key': idempotency_key,
+        })
+
     return server
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", choices=["codex", "claude"], required=True)
+    parser.add_argument("--agent", required=True, help="Credential alias or issued agent ID; independent from model/client name")
     parser.add_argument("--credentials", type=Path)
     parser.add_argument("--data-dir", type=Path, help="Read current loopback URL from this desktop data directory")
     parser.add_argument("--token-file", type=Path)
@@ -506,6 +635,8 @@ def main(argv: list[str] | None = None) -> None:
     original = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(original)
     try:
+        if not args.agent.strip() or len(args.agent) > 100 or any(c in args.agent for c in "\r\n\0"):
+            raise ValueError("Invalid agent ID: use 1–100 characters without line breaks")
         if not args.session_id or len(args.session_id) > 200 or "\n" in args.session_id or "\r" in args.session_id:
             raise ValueError("Invalid session ID: use 1–200 characters without line breaks")
         target = forwarding_target(args.data_dir, args.url)

@@ -1,7 +1,7 @@
-"""Install the real VSIX into an isolated VS Code and exercise its actual Webview.
+"""Load the real VSIX into an isolated VS Code and exercise its actual Webview.
 
-Requires installed Windows x64 VS Code and the repository's dev Python environment.
-Uses Microsoft's extension-test entry point and Playwright's browser CDP support.
+Requires official Windows x64 VS Code and the repository's dev Python environment.
+Uses an isolated QA extension and Playwright's browser CDP support.
 The native save-dialog selection is stubbed; its bridge and filesystem write are real.
 """
 from __future__ import annotations
@@ -10,7 +10,6 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import socket
 import subprocess
 import time
@@ -80,7 +79,9 @@ async def attach_iframe(connection, target_id):
 
 
 async def check_ui(directory: Path, port: int, environment: dict):
-    ready = await wait_file(directory / "ready.json")
+    # Cold workbench startup, native runtime copying/start and connector setup are
+    # separate bounded phases; their combined readiness can exceed one minute.
+    ready = await wait_file(directory / "ready.json", timeout=180)
     runtime = ready["runtime"]
     assert runtime["data_dir"] == str(directory / "local" / "Agentboard")
     repository = directory / "repo with spaces"
@@ -148,9 +149,15 @@ async def check_ui(directory: Path, port: int, environment: dict):
         await fill("task_type", "testing")
         await fill("rationale", "Validate the editor and shared API")
         await fill("acceptance_criteria", "MCP changes appear in the editor")
+        await click("Свой исполнитель")
+        await evaluate("(() => {const input=document.querySelector('.assignee-create input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'VSIX QA team');input.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        await click("Сохранить исполнителя")
+        await wait_ui("document.querySelector('select[name=assignee_id]')?.selectedOptions[0]?.textContent==='VSIX QA team'")
         await click("Создать")
         await wait_ui("!!document.querySelector('.drawer-body')")
         await click("Закрыть")
+        identity = next(item for item in api(runtime["base_url"] + "/api/bootstrap")["agents"] if item["name"] == "VSIX QA team")
+        assert api(runtime["base_url"] + "/api/projects/" + project["id"])["tasks"][0]["assignee_id"] == identity["id"]
         assert await evaluate("document.querySelectorAll('.kanban-column').length") == 5
         session_parameters = StdioServerParameters(command=str(companion), args=["--mcp", "--agent", "codex",
             "--data-dir", runtime["data_dir"], "--session-id", "vscode-actual-qa"], env=environment)
@@ -172,13 +179,26 @@ async def check_ui(directory: Path, port: int, environment: dict):
                     await tool("log_change", {"task_id": task["id"], "summary": "Real MCP call from frozen companion",
                         "files": ["scripts/vscode_smoke.py"], "verification": "Task appeared in VSCode webview",
                         "reason": "Record check", "idempotency_key": "vscode-change"})
+                    await tool("publish_project_map", {"project_id": project["id"], "expected_version": 0, "idempotency_key": str(uuid4()),
+                        "source_revision": "isolated-vsix-qa", "reason": "Verify bundled map through MCP",
+                        "files": [{"path": "src/App.tsx", "sha256": "1" * 64,
+                            "description": {"title": "VSIX project map", "summary": "Published through frozen MCP",
+                                "purpose": "Verify shared documentation in the editor", "workflow": ["Read the shared API"]}}],
+                        "diagrams": [{"id": "qa-flow", "title": "VSIX flow", "notation": "flowchart",
+                            "scope": "Isolated QA", "legend": "Arrows show publication", "explanation": "MCP publishes to the UI",
+                            "source": "flowchart LR\n  MCP --> API --> UI", "related_paths": ["src/App.tsx"]}]})
+                    await tool("configure_project_module", {"project_id": project["id"], "module_id": "releases",
+                        "expected_version": 0, "enabled": True, "reason": "Verify bundled release UI", "idempotency_key": "vsix-releases-on"})
+                    release = await tool("create_project_release", {"project_id": project["id"], "version_name": "VSIX release",
+                        "changelog": "Release history from the real frozen MCP", "status": "released", "released_at": "2026-10-17",
+                        "reason": "Verify shared release journal", "idempotency_key": "vsix-release"})
                     await wait_ui("Array.from(document.querySelectorAll('.kanban-card')).some(b=>b.textContent.includes(" + json.dumps(task["title"]) + "))")
                     await command("blocked-stop")
                     assert api(runtime["base_url"] + "/api/health")["mcp_running"] is True
         await evaluate("Array.from(document.querySelectorAll('.nav-item')).find(b=>b.textContent.startsWith('Коннекторы')).click()")
-        config = await wait_ui("document.querySelector('.connector-card.codex pre')?.textContent")
-        await click("Скопировать конфигурацию Codex")
-        await wait_ui("document.querySelector('.connector-card.codex')?.textContent.includes('Скопировано')", timeout=10)
+        config = await wait_ui("document.querySelector('.connector-configurator pre')?.textContent")
+        await click("Скопировать MCP-конфигурацию")
+        await wait_ui("document.querySelector('.connector-configurator')?.textContent.includes('Скопировано')", timeout=10)
         await command("clipboard", expected=config)
         observed_reply = await parent_evaluate("window.dashaiQAReply")
         assert observed_reply["origin"] == origins["ancestors"][0] and observed_reply["sourceIsWindow"] is False
@@ -190,17 +210,47 @@ async def check_ui(directory: Path, port: int, environment: dict):
             await asyncio.sleep(.1)
         assert (directory / "project-export.json").is_file(), "Actual webview-to-host export writes a file"
         await command("export", project_id=project["id"], task_title=task["title"])
+        await click("Карта проекта")
+        await wait_ui("document.querySelector('.map-file-article')?.textContent.includes('VSIX project map')")
+        await click("Документация")
+        await click("Настроить состав")
+        await wait_ui("!!document.querySelector('.map-checkbox')")
+        await evaluate("Array.from(document.querySelectorAll('.map-checkbox')).find(label=>label.textContent.includes('VSIX flow')).click()")
+        await evaluate("Array.from(document.querySelectorAll('.doc-navigation button')).find(button=>button.getAttribute('aria-label')==='Архитектура и сценарии').click()")
+        await wait_ui("document.querySelector('.map-diagram iframe')?.srcdoc.includes('<svg')", timeout=45)
+        for label, suffix in (("Markdown", "md"), ("HTML", "html")):
+            await click(label)
+            exported = directory / ("dashai-documentation." + suffix)
+            deadline = time.monotonic() + 15
+            while not exported.is_file() and time.monotonic() < deadline:
+                await asyncio.sleep(.1)
+            assert exported.is_file(), "Documentation host bridge writes " + suffix
+            text = exported.read_text(encoding="utf-8")
+            assert all(value in text for value in ("src/App.tsx", "Published through frozen MCP", "VSIX flow"))
+            assert ("<svg" in text and "<script" not in text) if suffix == "html" else "```mermaid" in text
+        await evaluate("(() => { const input=Array.from(document.querySelectorAll('.map-settings label')).find(label=>label.textContent.includes('Причина сохранения')).querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Verify persistent VSIX composition'); input.dispatchEvent(new Event('input',{bubbles:true})); })()")
+        await click("Сохранить состав")
+        await wait_ui("document.querySelector('.map-settings button')?.disabled && !document.querySelector('.map-settings').disabled")
         await browser.contexts[0].pages[0].screenshot(path=str(directory / "editor-board.png"))
+        await wait_ui("Array.from(document.querySelectorAll('.tabs-nav button')).some(button=>button.textContent.trim()==='Версии')")
+        await click("Версии")
+        await wait_ui("document.querySelector('.release-row')?.textContent.includes('VSIX release')")
+        await evaluate("document.querySelector('.release-row').click()")
+        await wait_ui("document.querySelector('.release-document')?.textContent.includes('Release history from the real frozen MCP')")
+        await browser.contexts[0].pages[0].screenshot(path=str(directory / "editor-releases.png"))
         await command("restart")
         next_runtime = read_json(directory / "runtime-after-restart.json")
         stored = api(next_runtime["base_url"] + "/api/projects/" + project["id"])
         assert {task["title"], "VSCode UI task"} <= {item["title"] for item in stored["tasks"]}
+        assert api(next_runtime["base_url"] + "/api/projects/" + project["id"] + "/releases/" + release["id"])["status"] == "released"
         assert companion.is_file() and (repository / ".mcp.json").is_file()
         await command("finish")
         return {"status": "passed", "vscode": ready["vscode"], "extension_version": runtime["version"],
-            "parent_origins": origins["ancestors"], "checks": ["actual VSIX install", "real editor iframe", "UI task creation",
+            "parent_origins": origins["ancestors"], "checks": ["isolated packaged VSIX", "real editor iframe", "UI task creation",
                 "five-column shared Kanban", "frozen MCP task/claim/change visible", "MCP shutdown guard", "VSCode clipboard bridge",
-                "native export bridge (save-dialog selection stubbed)", "persistent data after runtime restart", "durable MCP configs"]}
+                "native export bridge (save-dialog selection stubbed)", "frozen MCP map in editor and Mermaid rendering",
+                "Markdown and HTML documentation host bridge", "persistent data after runtime restart", "durable MCP configs",
+                "custom assignee created and assigned through real editor UI", "frozen MCP release history visible and persistent in editor"]}
 
 
 def main():
@@ -222,38 +272,38 @@ def main():
     driver = directory / "driver"
     driver.mkdir()
     (driver / "package.json").write_text(json.dumps({"name": "dashai-qa", "publisher": "local-qa", "version": "0.0.1",
-        "engines": {"vscode": "^1.95.0"}, "main": "./index.cjs"}), encoding="utf-8")
+        "engines": {"vscode": "^1.95.0"}, "activationEvents": ["onStartupFinished"], "main": "./index.cjs"}), encoding="utf-8")
     (driver / "index.cjs").write_text((ROOT / "vscode-extension" / "tests" / "actual-driver.cjs").read_text(encoding="utf-8"), encoding="utf-8")
     environment = dict(os.environ, LOCALAPPDATA=str(directory / "local"), USERNAME="DashAI-QA-" + uuid4().hex,
         DASHAI_VSCODE_QA=str(directory))
-    environment.pop("ELECTRON_RUN_AS_NODE", None)
+    # A Codex terminal can inherit VS Code's extension-host entry point/cache.
+    # A separate editor must bootstrap itself rather than inherit those internals.
+    for name in tuple(environment):
+        if name.startswith("VSCODE_") or name == "ELECTRON_RUN_AS_NODE":
+            environment.pop(name)
     environment.pop("AGENTBOARD_TOKEN", None)
     # The CLI is Microsoft's own installed launcher. No working editor profile is changed.
-    cli_env = dict(environment, ELECTRON_RUN_AS_NODE="1")
-    cli = args.code.parent / "resources" / "app" / "out" / "cli.js"
-    if not cli.is_file():
-        launcher = (args.code.parent / "bin" / "code.cmd").read_text(encoding="utf-8")
-        relative = re.search(r'%~dp0\.\.\\([^"\r\n]+cli\.js)', launcher)
-        assert relative, "Installed code.cmd must identify the current CLI"
-        cli = args.code.parent / relative.group(1)
+    cli = args.code.parent / "bin" / "code.cmd"
+    assert cli.is_file(), "Installed VS Code must include its official CLI launcher"
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = subprocess.SW_HIDE
-    install = subprocess.run([str(args.code), str(cli), "--user-data-dir", str(profile), "--extensions-dir", str(extensions),
-        "--install-extension", str(vsix), "--force"], env=cli_env, capture_output=True, text=True, timeout=120, startupinfo=startup)
-    (directory / "install.log").write_text(install.stdout + install.stderr, encoding="utf-8")
-    assert install.returncode == 0, install.stdout + install.stderr
+    with (directory / "install.log").open("w", encoding="utf-8") as install_log:
+        install = subprocess.run([str(cli), "--user-data-dir", str(profile), "--extensions-dir", str(extensions),
+            "--install-extension", str(vsix), "--force"], env=environment, stdout=install_log, stderr=subprocess.STDOUT, timeout=120, startupinfo=startup)
+    assert install.returncode == 0, (directory / "install.log").read_text(encoding="utf-8")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     arguments = [str(args.code), str(repository), "--user-data-dir", str(profile), "--extensions-dir", str(extensions),
-        "--extensionDevelopmentPath=" + str(driver), "--extensionTestsPath=" + str(driver / "index.cjs"),
+        "--extensionDevelopmentPath=" + str(driver),
         "--remote-debugging-port=" + str(port), "--disable-updates", "--skip-welcome", "--skip-release-notes",
         "--disable-workspace-trust", "--no-cached-data"]
     with (directory / "vscode.log").open("w", encoding="utf-8") as output:
         process = subprocess.Popen(arguments, env=environment, stdout=output, stderr=subprocess.STDOUT, startupinfo=startup)
         try:
             results = asyncio.run(check_ui(directory, port, environment))
+            results["installation"] = "official VS Code CLI"
             process.wait(timeout=30)
             assert process.returncode == 0, "VS Code extension tests returned failure"
             (directory / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
