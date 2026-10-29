@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-29T20:26:21Z",
+  "title": "Design System: DashAI PRISM",
+  "extensions": {
+    "shadows": [
+      {"name":"primary-action","value":"inset 0 1px 1px #eee6ff66, inset 0 -2px 5px #3920c4, 0 4px 22px #6e3df77a","purpose":"Inset highlight and violet glow for the primary action."},
+      {"name":"panel-shine","value":"inset 0 1px 0 #c8bcff1a, 0 12px 32px #02051838","purpose":"Shared top highlight and soft shadow for work panels."},
+      {"name":"inspector","value":"inset 0 1px 0 #cdbaff38, 0 16px 48px #05051d66, 0 0 32px #6942e026","purpose":"Docked inspector highlight, soft shadow and violet glow."},
+      {"name":"modal","value":"0 24px 80px #06071980","purpose":"Modal dialog depth."}
+    ],
+    "motion": [
+      {"name": "button-state", "value": "background-color .16s, border-color .16s, box-shadow .16s", "purpose": "Изменение состояния кнопок."},
+      {"name": "mobile-navigation", "value": "transform 0.15s", "purpose": "Открытие мобильной навигации; отключается при prefers-reduced-motion."}
+    ],
+    "breakpoints": [
+      {"name": "inspector-docked-min", "value": "1280px"},
+      {"name": "navigation-compact-max", "value": "1270px"},
+      {"name": "documentation-compact-max", "value": "1200px"},
+      {"name": "feature-single-column-max", "value": "1100px"},
+      {"name": "map-and-documentation-mobile-max", "value": "800px"},
+      {"name": "kanban-mobile-max", "value": "760px"},
+      {"name": "shell-mobile-max", "value": "700px"}
+    ]
+  },
+  "components": [
+    {
+      "name": "Основная кнопка", "kind": "button", "refersTo": "button-primary",
+      "description": "Главное действие текущего рабочего контекста.",
+      "html": "<button class=\"ds-primary\">Новая задача</button>",
+      "css": ".ds-primary{font:600 13px/1.55 Inter,'Segoe UI',Arial,sans-serif;min-height:40px;padding:10px 15px;border:1px solid #ad94ff;border-radius:10px;background:var(--action-fill,linear-gradient(120deg, #7957ff 0%, #6237f1 48%, #4324d8 100%));color:#fff;box-shadow:inset 0 1px 1px #eee6ff66, inset 0 -2px 5px #3920c4, 0 4px 22px #6e3df77a;cursor:pointer;transition:background-color .16s,border-color .16s,box-shadow .16s}.ds-primary:hover{background:linear-gradient(120deg, #8554f6, #7144ed 48%, #5632e8);border-color:#c1b3ff;box-shadow:inset 0 1px 1px #eee6ff80, 0 6px 26px #8050ff8c}.ds-primary:focus-visible{outline:2px solid var(--accent,#b9a6ff);outline-offset:3px}.ds-primary:disabled{opacity:.55;cursor:wait}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Вторичная кнопка", "kind": "button", "refersTo": "button-secondary",
+      "description": "Дополнительное действие без конкуренции с основным.",
+      "html": "<button class=\"ds-secondary\">Экспорт</button>",
+      "css": ".ds-secondary{font:600 13px/1.55 Inter,'Segoe UI',Arial,sans-serif;min-height:40px;padding:10px 15px;border:1px solid var(--border,#3c4271);border-radius:10px;background:linear-gradient(135deg, #292c57b3, #121b32cc);color:var(--text,#eef1ff);cursor:pointer;transition:background-color .16s,border-color .16s,box-shadow .16s}.ds-secondary:hover{background:var(--surface-hover,#2c3266);border-color:var(--border-strong,#777eae)}.ds-secondary:focus-visible{outline:2px solid var(--accent,#b9a6ff);outline-offset:3px}.ds-secondary:disabled{opacity:.55;cursor:wait}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none}}"
+    },
+    {
+      "name": "Текстовое поле", "kind": "input", "refersTo": "input",
+      "description": "Native input с видимой подписью и сильной границей.",
+      "html": "<label class=\"ds-field\">Название<input placeholder=\"Название задачи\"></label>",
+      "css": ".ds-field{display:grid;gap:7px;font:13px/1.55 Inter,'Segoe UI',Arial,sans-serif;color:var(--muted,#bdc3e6)}.ds-field input{font:inherit;min-height:39px;padding:10px 11px;border:1px solid var(--border-strong,#777eae);border-radius:6px;background:var(--panel,#111832);color:#e4edf9;caret-color:var(--accent,#b9a6ff)}.ds-field input::placeholder{color:var(--subtle,#98a5c7);opacity:1}.ds-field input:hover{border-color:var(--subtle,#98a5c7)}.ds-field input:focus-visible{outline:2px solid var(--accent,#b9a6ff);outline-offset:3px}"
+    },
+    {
+      "name": "Навигация", "kind": "nav", "refersTo": "navigation",
+      "description": "Текстовая навигация с выбранным пунктом; не состояние подключения.",
+      "html": "<nav aria-label=\"Разделы проекта\" class=\"ds-nav\"><button aria-current=\"page\">Задачи</button><button>Документация</button></nav>",
+      "css": ".ds-nav{display:grid;gap:3px}.ds-nav button{font:14px/1.55 Inter,'Segoe UI',Arial,sans-serif;min-height:44px;padding:9px 12px;text-align:left;border:1px solid transparent;border-radius:12px;background:transparent;color:var(--muted,#bdc3e6);cursor:pointer}.ds-nav button[aria-current=page]{background:var(--selected-fill,linear-gradient(110deg, #6741cd, #342675 48%, #1b244d));border-color:#8d70e6;box-shadow:inset 0 1px 0 #dbd0ff33, 0 5px 20px #4220b43d;color:var(--text,#eef1ff)}.ds-nav button:hover:not([aria-current]){background:var(--surface-hover,#2c3266);color:var(--text,#eef1ff)}.ds-nav button:focus-visible{outline:2px solid var(--accent,#b9a6ff);outline-offset:3px}"
+    },
+    {
+      "name": "Статус проверки", "kind": "chip", "refersTo": "status-review",
+      "description": "Неинтерактивная подпись статуса; цвет дополняет текст.",
+      "html": "<span class=\"ds-review\">Проверка</span>",
+      "css": ".ds-review{display:inline-flex;align-items:center;font:11px/1.6 Inter,'Segoe UI',Arial,sans-serif;padding:3px 7px;border:1px solid #706099;border-radius:5px;background:var(--selected,#392b7a);color:var(--purple,#c4b1ff);white-space:nowrap}"
+    },
+    {
+      "name": "Карточка задачи", "kind": "card", "refersTo": "task-card",
+      "description": "Тональная карточка доски с действием открытия.",
+      "html": "<article class=\"ds-card\"><button><small>Пример · DA-105</small><strong>Проверка экспорта PDF</strong><span>Документация</span></button></article>",
+      "css": ".ds-card{border:1px solid #6963a473;border-radius:12px;background:linear-gradient(135deg, #3a356773, #1a2544cc 55%, #131b36e6);box-shadow:inset 0 1px 0 #d5c6ff12, 0 6px 16px #04071933;overflow:hidden}.ds-card button{display:flex;flex-direction:column;gap:10px;width:100%;padding:14px;border:0;border-radius:7px 7px 0 0;background:transparent;color:var(--text,#eef1ff);text-align:left;cursor:pointer;font:14px/1.55 Inter,'Segoe UI',Arial,sans-serif}.ds-card small,.ds-card span{font-size:12px;color:var(--muted,#bdc3e6)}.ds-card button:hover{background:var(--surface-hover,#2c3266)}.ds-card:focus-within{border-color:var(--accent,#b9a6ff)}.ds-card button:focus-visible{outline:2px solid var(--accent,#b9a6ff);outline-offset:-3px}"
+    },
+    {"name":"Glass panel","kind":"custom","description":"Shared work surface on the ambient page background.","html":"<div class=\"ds-canvas\"><section class=\"ds-panel\">PRISM</section></div>","css":".ds-canvas{padding:28px;background:radial-gradient(ellipse at 70% 0, #5730aa8c, transparent 52%), radial-gradient(ellipse at 100% 95%, #4823c075, transparent 55%), radial-gradient(ellipse at 4% 48%, #193c8273, transparent 48%), var(--bg,#090e25);color:var(--text,#eef1ff)}.ds-panel{padding:24px;border:1px solid var(--border,#3c4271);border-radius:16px;background:var(--panel-fill,linear-gradient(125deg, #34325b9c, #171f3cf2 48%, #10162dee));box-shadow:var(--panel-shine,inset 0 1px 0 #c8bcff1a, 0 12px 32px #02051838);font:14px/1.55 Inter,\"Segoe UI\",Arial,sans-serif}"},
+    {"name":"Inspector surface","kind":"custom","description":"Docked task surface; responsive positioning is specified in DESIGN.md.","html":"<section class=\"ds-inspector\">PRISM</section>","css":".ds-inspector{padding:24px;border:1px solid #8c72d58c;border-radius:16px;background:radial-gradient(ellipse at 4% 0, #604ba463, transparent 55%), radial-gradient(ellipse at 100% 100%, #5425bc38, transparent 65%), linear-gradient(140deg, #182440ed, #111731f5 65%);backdrop-filter:blur(20px);box-shadow:inset 0 1px 0 #cdbaff38, 0 16px 48px #05051d66, 0 0 32px #6942e026;color:var(--text,#eef1ff);font:14px/1.55 Inter,\"Segoe UI\",Arial,sans-serif}"}
+  ],
+  "narrative": {
+    "northStar": "PRISM",
+    "overview": "Выбранный пользователем визуальный язык: глубокий navy, насыщенные violet-градиенты, полупрозрачные сливовые панели и заметное локальное свечение. Обратная связь 29 октября 2026 года закрепила более выраженную глубину вместо почти плоских заливок. Макет `artifacts/design-concepts/2026-10-21/blue-directions/02-prism.png` — локальный ориентир направления, а не спецификация пикселей или источник продуктовых данных.",
+    "keyCharacteristics": ["Задачи, критерии и история важнее декоративных блоков.", "Выраженные градиенты, полупрозрачные панели и локальное свечение.", "Видимый выбор и keyboard focus; статус подписан текстом."],
+    "rules": [],
+    "dos": ["Использовать общие токены и native controls, сохранять видимый focus и перенос длинных данных.", "Сохранять реальные состояния, критерии и авторство evidence рядом с результатом задачи.", "Проверять широкую, узкую и печатную компоновку после изменений."],
+    "donts": ["Копировать демонстрационные данные, декоративные метрики или статусы подключения из макета в продукт.", "Превращать выбранный визуальный референс в требование пиксельного совпадения ценой функций.", "Переносить тёмную тему приложения в белый HTML/PDF экспорт."]
+  }
+}

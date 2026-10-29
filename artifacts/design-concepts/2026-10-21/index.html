@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>DashAI — 5 концепций дизайна</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f4f1;color:#202723;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.shell{max-width:1760px;margin:auto;padding:28px 32px 24px}header{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:24px}
+.brand{font-size:14px;font-weight:700;letter-spacing:.12em}h1{margin:6px 0 4px;font-size:clamp(24px,3vw,36px);font-weight:650;letter-spacing:-.04em}p{margin:0;color:#59635c}
+.note{font-size:13px;max-width:310px}fieldset{border:0;padding:0;margin:0 0 22px;min-width:0}legend{padding:0;margin-bottom:10px;font-size:13px;color:#59635c}
+.choices{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.choice{position:relative;display:flex;align-items:center;gap:12px;padding:13px 16px;background:#fafbf8;border:1px solid #d4dad3;border-radius:12px;cursor:pointer}
+.choice:has(:checked){background:#fff;border-color:#253e30;box-shadow:0 0 0 1px #253e30}.choice:hover{border-color:#7d8e80}.choice:has(:focus-visible){outline:3px solid #1968d2;outline-offset:4px}
+.choice input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.number{font-size:12px;color:#566158;font-variant-numeric:tabular-nums}.swatch{width:10px;height:28px;flex-shrink:0;border-radius:4px;background:var(--color)}
+.choice strong{display:block;font-size:15px}.choice small{display:block;color:#59635c;font-size:12px}.panel{display:none}
+body:has(#concept-1:checked) #panel-1{display:block}
+body:has(#concept-2:checked) #panel-2{display:block}
+body:has(#concept-3:checked) #panel-3{display:block}
+body:has(#concept-4:checked) #panel-4{display:block}
+body:has(#concept-5:checked) #panel-5{display:block}
+.caption{display:flex;justify-content:space-between;align-items:center;gap:24px;margin:0 0 12px}h2{font-size:19px;margin:0 0 3px;letter-spacing:-.02em}.caption p{font-size:14px}
+a{color:#27543a;text-underline-offset:4px}a:focus-visible{outline:3px solid #1968d2;outline-offset:4px}.full{flex-shrink:0;font-size:14px;padding:10px 0}
+.preview{display:block;background:#e4e8e1;border:1px solid #d1d7d0;border-radius:12px;overflow:hidden;line-height:0}
+.preview img{display:block;width:100%;height:auto;max-height:calc(100vh - 305px);object-fit:contain}footer{margin-top:13px;display:flex;justify-content:space-between;gap:16px;color:#59635c;font-size:12px}
+@media(max-width:800px){.shell{padding:20px 16px}header{display:block;margin-bottom:18px}.note{margin-top:10px;max-width:none}.choices{grid-template-columns:repeat(3,minmax(0,1fr))}.choice{padding:11px;gap:8px}.number{display:none}.caption{align-items:flex-start}.preview img{max-height:none}}
+@media(max-width:480px){.choices{grid-template-columns:repeat(2,minmax(0,1fr))}.choice:last-child{grid-column:1/-1}.caption{display:block}.full{display:inline-block}.preview{border-radius:6px}footer{display:block}footer span{display:block;margin-bottom:5px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header>
+<div><div class="brand">DashAI / DESIGN EXPLORATION</div><h1>Пять направлений. Один DashAI.</h1><p>Выберите вариант и рассмотрите его в полном размере.</p></div>
+<p class="note">Визуальные концепции с демонстрационными данными. Элементы внутри изображений не интерактивны.</p>
+</header>
+<fieldset><legend>Вариант дизайна</legend><div class="choices">
+<label class="choice" style="--color:#a8e1b8"><input type="radio" name="concept" id="concept-1" value="graphite" checked><span class="number">01</span><span class="swatch" aria-hidden="true"></span><span><strong>Graphite</strong><small>Графит и мята</small></span></label>
+<label class="choice" style="--color:#3d6652"><input type="radio" name="concept" id="concept-2" value="paper"><span class="number">02</span><span class="swatch" aria-hidden="true"></span><span><strong>Paper</strong><small>Светлый редакционный</small></span></label>
+<label class="choice" style="--color:#69d9e5"><input type="radio" name="concept" id="concept-3" value="midnight"><span class="number">03</span><span class="swatch" aria-hidden="true"></span><span><strong>Midnight</strong><small>Технический тёмный</small></span></label>
+<label class="choice" style="--color:#789d88"><input type="radio" name="concept" id="concept-4" value="sage"><span class="number">04</span><span class="swatch" aria-hidden="true"></span><span><strong>Sage</strong><small>Фокус на внимании</small></span></label>
+<label class="choice" style="--color:#ef542e"><input type="radio" name="concept" id="concept-5" value="signal"><span class="number">05</span><span class="swatch" aria-hidden="true"></span><span><strong>Signal</strong><small>Контрастный и строгий</small></span></label>
+</div></fieldset>
+<main>
+<section class="panel" id="panel-1" aria-labelledby="title-1">
+<div class="caption"><div><h2 id="title-1">01 / Graphite</h2><p>Тёмная доска с акцентом на задачи и спокойной визуальной иерархией.</p></div><a class="full" href="01-graphite.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="01-graphite.png" target="_blank" rel="noopener" aria-label="Открыть Graphite в полном размере"><img src="01-graphite.png" alt="Graphite: Тёмная доска с акцентом на задачи и спокойной визуальной иерархией." width="1586" height="992"></a>
+</section>
+<section class="panel" id="panel-2" aria-labelledby="title-2">
+<div class="caption"><div><h2 id="title-2">02 / Paper</h2><p>Список задач и подробности рядом. Много воздуха, тонкие линии, тёплый фон.</p></div><a class="full" href="02-paper.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="02-paper.png" target="_blank" rel="noopener" aria-label="Открыть Paper в полном размере"><img src="02-paper.png" alt="Paper: Список задач и подробности рядом. Много воздуха, тонкие линии, тёплый фон." width="1586" height="992"></a>
+</section>
+<section class="panel" id="panel-3" aria-labelledby="title-3">
+<div class="caption"><div><h2 id="title-3">03 / Midnight</h2><p>Доска и панель проверки на одном экране. Компактный интерфейс с голубым акцентом.</p></div><a class="full" href="03-midnight.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="03-midnight.png" target="_blank" rel="noopener" aria-label="Открыть Midnight в полном размере"><img src="03-midnight.png" alt="Midnight: Доска и панель проверки на одном экране. Компактный интерфейс с голубым акцентом." width="1586" height="992"></a>
+</section>
+<section class="panel" id="panel-4" aria-labelledby="title-4">
+<div class="caption"><div><h2 id="title-4">04 / Sage</h2><p>Проверки и блокировки на первом плане, критерии и связанные документы справа.</p></div><a class="full" href="04-sage.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="04-sage.png" target="_blank" rel="noopener" aria-label="Открыть Sage в полном размере"><img src="04-sage.png" alt="Sage: Проверки и блокировки на первом плане, критерии и связанные документы справа." width="1586" height="992"></a>
+</section>
+<section class="panel" id="panel-5" aria-labelledby="title-5">
+<div class="caption"><div><h2 id="title-5">05 / Signal</h2><p>Чёткая сетка, выразительная типографика и оранжевый акцент.</p></div><a class="full" href="05-signal.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="05-signal.png" target="_blank" rel="noopener" aria-label="Открыть Signal в полном размере"><img src="05-signal.png" alt="Signal: Чёткая сетка, выразительная типографика и оранжевый акцент." width="1586" height="992"></a>
+</section>
+</main>
+<footer><span>Переключайте варианты мышью или стрелками клавиатуры после Tab.</span><span>21 октября 2026 · 5 концепций</span></footer>
+</div>
+</body>
+</html>

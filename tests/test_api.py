@@ -61,6 +61,62 @@ def patch(client, item, changes, headers=BROWSER, expected=200):
     return response.json()
 
 
+def test_overview_counts_filters_order_pagination_and_read_only(workspace):
+    app, client, agents = workspace
+    first, first_section = project_and_section(client)
+    second, second_section = project_and_section(client)
+    empty = post(client, "/api/projects", {"name": "Пустой проект"})
+    blocked_low = task(client, first, first_section, "Сбой оплаты", priority="low")
+    blocked_low = patch(client, blocked_low, {"status": "blocked"})
+    blocked_high = task(client, first, first_section, "СБОЙ входа", priority="high")
+    blocked_high = patch(client, blocked_high, {"status": "blocked"})
+    reviewing = task(client, second, second_section, "Проверить оплату", priority="urgent")
+    reviewing = patch(client, reviewing, {"status": "review"})
+    running = task(client, first, first_section, "Улучшить поиск", priority="urgent")
+    running = patch(client, running, {"status": "in_progress"})
+    queued = task(client, second, second_section, "Написать документацию")
+    completed = task(client, first, first_section, "Готовая задача")
+    post(client, f"/api/tasks/{completed['id']}/notes", {"kind": "evidence", "body": "Результат проверен"})
+    completed = patch(client, completed, {"status": "done"})
+
+    def snapshot():
+        with app.state.store.connect() as db:
+            # Authenticated agent reads update their heartbeat, never domain data or audit history.
+            return {table: [tuple(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+                    for table in ("projects", "sections", "tasks", "notes", "events")}
+
+    before = snapshot()
+    overview = client.get("/api/overview", params={"limit": 2}).json()
+    assert overview["total"] == 3 and overview["offset"] == 0 and overview["limit"] == 2
+    assert [item["id"] for item in overview["tasks"]] == [blocked_high["id"], blocked_low["id"]]
+    assert overview["counts"] == {"blocked": 2, "review": 1, "in_progress": 1, "backlog": 1, "done": 1}
+    summaries = {item["id"]: item for item in overview["projects"]}
+    assert summaries[first["id"]]["total"] == 4
+    assert summaries[first["id"]]["counts"] == {"blocked": 2, "review": 0, "in_progress": 1, "backlog": 0, "done": 1}
+    assert summaries[second["id"]]["total"] == 2
+    assert summaries[empty["id"]]["total"] == 0 and not any(summaries[empty["id"]]["counts"].values())
+    assert set(overview["tasks"][0]) == {"id", "short_id", "project_id", "title", "task_type", "status", "priority", "assignee_id", "updated_at"}
+    page_two = client.get("/api/overview", params={"limit": 2, "offset": 2}).json()
+    assert [item["id"] for item in page_two["tasks"]] == [reviewing["id"]]
+    assert page_two["total"] == 3
+    active = client.get("/api/overview", params={"status": "active"}).json()
+    assert [item["id"] for item in active["tasks"]] == [blocked_high["id"], blocked_low["id"], reviewing["id"], running["id"], queued["id"]]
+    filtered = client.get("/api/overview", params={"project_id": first["id"], "q": "сбой", "status": "review"}).json()
+    assert filtered["tasks"] == [] and filtered["total"] == 0
+    assert filtered["counts"]["blocked"] == 2 and sum(filtered["counts"].values()) == 2
+    assert filtered["projects"] == overview["projects"]
+    assert client.get("/api/overview", params={"q": blocked_high["short_id"].lower()}).json()["total"] == 1
+    assert client.get("/api/overview", params={"status": "done"}).json()["tasks"][0]["id"] == completed["id"]
+    assert client.get("/api/overview", params={"project_id": empty["id"]}).json()["total"] == 0
+    assert client.get("/api/overview", params={"offset": 100}).json()["tasks"] == []
+    assert client.get("/api/overview", params={"project_id": "missing"}).status_code == 404
+    for params in ({"status": "invented"}, {"limit": 101}, {"limit": 0}, {"offset": -1}, {"q": "x" * 201}):
+        assert client.get("/api/overview", params=params).status_code == 422
+    assert client.get("/api/overview", headers={"Authorization": "Bearer invalid"}).status_code == 401
+    assert client.get("/api/overview", headers=agents["codex"]).status_code == 200
+    assert snapshot() == before
+
+
 def test_full_workflow_history_and_restart(workspace):
     app, client, agents = workspace
     empty = client.get("/api/bootstrap").json()

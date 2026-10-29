@@ -487,6 +487,44 @@ def create_app(data_dir: str | Path = ROOT / "data", seed_demo: bool = False, ba
             modules = [{key: item[key] for key in ("id", "name", "kind", "enabled", "version")} for item in project_modules(db, project_id, summary=True)]
             return {"project": project, "sections": [item for item in sections if item.get("kind") != "subproject"], "subprojects": [item for item in sections if item.get("kind") == "subproject"], "tasks": store.entities(db, "tasks", "WHERE project_id=?", (project_id,)), "activity": store.events(db, "WHERE project_id=?", (project_id,), tail=100, summary=True), "modules": modules}
 
+    @app.get("/api/overview", dependencies=[Depends(authenticated_read)])
+    def overview(project_id: str | None = None,
+                 status: Literal["attention", "active", "backlog", "in_progress", "review", "done", "blocked"] = "attention",
+                 q: str = Query(default="", max_length=200),
+                 offset: int = Query(default=0, ge=0), limit: int = Query(default=12, ge=1, le=100)):
+        status_order = {value: index for index, value in enumerate(("blocked", "review", "in_progress", "backlog", "done"))}
+        priority_order = {value: index for index, value in enumerate(("urgent", "high", "medium", "low"))}
+        selected_statuses = {"blocked", "review"} if status == "attention" else set(status_order) - {"done"} if status == "active" else {status}
+        with store.connect() as db:
+            db.execute("BEGIN")
+            projects = {item["id"]: {"id": item["id"], "total": 0, "counts": dict.fromkeys(status_order, 0),
+                                     "updated_at": item["updated_at"]} for item in store.entities(db, "projects")}
+            if project_id is not None and project_id not in projects:
+                raise HTTPException(404, "Проект не найден")
+            counts = dict.fromkeys(status_order, 0)
+            matches = []
+            query = q.strip().casefold()
+            for row in db.execute("SELECT payload FROM tasks"):
+                task = store.payload("tasks", row["payload"])
+                project = projects[task["project_id"]]
+                project["total"] += 1
+                project["counts"][task["status"]] += 1
+                project["updated_at"] = max(project["updated_at"], task["updated_at"])
+                if project_id is not None and task["project_id"] != project_id:
+                    continue
+                if query and query not in " ".join(task.get(field, "") for field in ("short_id", "title", "description", "rationale", "acceptance_criteria")).casefold():
+                    continue
+                counts[task["status"]] += 1
+                if task["status"] not in selected_statuses:
+                    continue
+                matches.append({field: task[field] for field in ("id", "short_id", "project_id", "title", "task_type", "status", "priority", "assignee_id", "updated_at")})
+            # Stable secondary keys keep equal-priority tasks in a predictable order.
+            matches.sort(key=lambda task: task["id"])
+            matches.sort(key=lambda task: task["updated_at"], reverse=True)
+            matches.sort(key=lambda task: (status_order[task["status"]], priority_order[task["priority"]]))
+            return {"projects": list(projects.values()), "counts": counts, "tasks": matches[offset:offset + limit],
+                    "total": len(matches), "offset": offset, "limit": limit, "updated_at": now()}
+
     @app.post("/api/projects")
     def create_project(body: ProjectCreate, request: Request, who=Depends(actor)):
         session_id = session(request)

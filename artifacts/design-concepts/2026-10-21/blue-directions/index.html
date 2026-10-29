@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>DashAI — пять новых направлений</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080f20;color:#edf3ff;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.shell{max-width:1760px;margin:auto;padding:20px 28px}header{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:18px}
+h1{margin:0 0 4px;font-size:clamp(20px,2.3vw,27px);font-weight:650;letter-spacing:-.025em}p{margin:0;color:#acbad2}.note{font-size:13px;max-width:760px}
+a{color:#a2c7ff;text-underline-offset:4px}a:focus-visible{outline:3px solid #88baff;outline-offset:4px}.previous{flex-shrink:0;font-size:13px;padding:10px 0}
+fieldset{border:0;padding:0;margin:0 0 18px;min-width:0}legend{padding:0;margin-bottom:8px;font-size:13px;color:#acbad2}
+.choices{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}.choice{position:relative;display:flex;align-items:center;gap:11px;padding:11px 14px;background:#101c33;border:1px solid #344460;border-radius:10px;cursor:pointer}
+.choice:has(:checked){background:#1a3156;border-color:#8fbaff;box-shadow:0 0 0 1px #8fbaff}.choice:hover{border-color:#8b9fbd}.choice:has(:focus-visible){outline:3px solid #88baff;outline-offset:4px}
+.choice input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.number{font-size:12px;color:#b5c4de;font-variant-numeric:tabular-nums}.swatch{width:8px;height:25px;flex-shrink:0;border-radius:4px;background:var(--color)}
+.choice strong{display:block;font-size:14px;letter-spacing:.04em}.choice small{display:block;color:#b5c4de;font-size:12px}.panel{display:none}
+body:has(#concept-1:checked) #panel-1{display:block}
+body:has(#concept-2:checked) #panel-2{display:block}
+body:has(#concept-3:checked) #panel-3{display:block}
+body:has(#concept-4:checked) #panel-4{display:block}
+body:has(#concept-5:checked) #panel-5{display:block}
+.caption{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:10px}h2{font-size:17px;margin:0 0 3px;letter-spacing:.015em}.caption p{font-size:13px}.full{flex-shrink:0;font-size:13px;padding:10px 0}
+.preview{display:block;background:#060c19;border:1px solid #344460;border-radius:10px;overflow:hidden;line-height:0}.preview img{display:block;width:100%;height:auto;max-height:max(280px,calc(100vh - 270px));object-fit:contain}
+footer{margin-top:11px;display:flex;justify-content:space-between;gap:16px;color:#acbad2;font-size:12px}
+@media(max-width:800px){.shell{padding:18px 16px}header{display:block;margin-bottom:14px}.previous{display:inline-block;margin-top:4px}.choices{grid-template-columns:repeat(3,minmax(0,1fr))}.choice{padding:11px;gap:8px}.number{display:none}.caption{align-items:flex-start}.preview img{max-height:none}}
+@media(max-width:480px){.choices{grid-template-columns:repeat(2,minmax(0,1fr))}.choice:last-child{grid-column:1/-1}.caption{display:block}.full{display:inline-block}.preview{border-radius:6px}footer{display:block}footer span{display:block;margin-bottom:5px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header>
+<div><h1>DashAI — пять новых направлений</h1><p class="note">Визуальные макеты с демонстрационными данными. Элементы внутри изображений не интерактивны.</p></div>
+<a class="previous" href="../index.html">← Предыдущая серия</a>
+</header>
+<fieldset><legend>Вариант дизайна</legend><div class="choices">
+<label class="choice" style="--color:#589cff"><input type="radio" name="concept" id="concept-1" value="azure" checked><span class="number">01</span><span class="swatch" aria-hidden="true"></span><span><strong>AZURE</strong><small>Доска и синий акцент</small></span></label>
+<label class="choice" style="--color:#c49aee"><input type="radio" name="concept" id="concept-2" value="prism"><span class="number">02</span><span class="swatch" aria-hidden="true"></span><span><strong>PRISM</strong><small>Проверка результатов</small></span></label>
+<label class="choice" style="--color:#6ee1ed"><input type="radio" name="concept" id="concept-3" value="polar"><span class="number">03</span><span class="swatch" aria-hidden="true"></span><span><strong>POLAR</strong><small>Компактная доска</small></span></label>
+<label class="choice" style="--color:#65d3bd"><input type="radio" name="concept" id="concept-4" value="tidal"><span class="number">04</span><span class="swatch" aria-hidden="true"></span><span><strong>TIDAL</strong><small>Очередь внимания</small></span></label>
+<label class="choice" style="--color:#9c9aff"><input type="radio" name="concept" id="concept-5" value="cobalt"><span class="number">05</span><span class="swatch" aria-hidden="true"></span><span><strong>COBALT</strong><small>Доска и подробности</small></span></label>
+</div></fieldset>
+<main>
+<section class="panel" id="panel-1" aria-labelledby="title-1">
+<div class="caption"><div><h2 id="title-1">01 / AZURE</h2><p>Пять статусов на общей доске, навигация слева и мягкий электрический синий.</p></div><a class="full" href="01-azure.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="01-azure.png" target="_blank" rel="noopener" aria-label="Открыть AZURE в полном размере"><img src="01-azure.png" alt="AZURE: тёмно-синяя доска задач с пятью статусами и постоянной левой навигацией."></a>
+</section>
+<section class="panel" id="panel-2" aria-labelledby="title-2">
+<div class="caption"><div><h2 id="title-2">02 / PRISM</h2><p>Очередь проверки и результат рядом: критерии, свидетельства и сливовые акценты.</p></div><a class="full" href="02-prism.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="02-prism.png" target="_blank" rel="noopener" aria-label="Открыть PRISM в полном размере"><img src="02-prism.png" alt="PRISM: список задач на проверке и широкая панель результата в тёмно-синих и сливовых оттенках."></a>
+</section>
+<section class="panel" id="panel-3" aria-labelledby="title-3">
+<div class="caption"><div><h2 id="title-3">03 / POLAR</h2><p>Верхняя навигация, компактная доска с пятью статусами и холодные голубые акценты.</p></div><a class="full" href="03-polar.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="03-polar.png" target="_blank" rel="noopener" aria-label="Открыть POLAR в полном размере"><img src="03-polar.png" alt="POLAR: компактная доска задач с пятью статусами, горизонтальной навигацией и голубым акцентом."></a>
+</section>
+<section class="panel" id="panel-4" aria-labelledby="title-4">
+<div class="caption"><div><h2 id="title-4">04 / TIDAL</h2><p>Проверки и блокировки в очереди внимания, остальные задачи — в компактном списке.</p></div><a class="full" href="04-tidal.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="04-tidal.png" target="_blank" rel="noopener" aria-label="Открыть TIDAL в полном размере"><img src="04-tidal.png" alt="TIDAL: очередь задач, требующих внимания, и компактный список на тёмной бирюзовой поверхности."></a>
+</section>
+<section class="panel" id="panel-5" aria-labelledby="title-5">
+<div class="caption"><div><h2 id="title-5">05 / COBALT</h2><p>Широкая доска с пятью статусами, узкая навигация и открытая панель задачи.</p></div><a class="full" href="05-cobalt.png" target="_blank" rel="noopener">Полный размер ↗</a></div>
+<a class="preview" href="05-cobalt.png" target="_blank" rel="noopener" aria-label="Открыть COBALT в полном размере"><img src="05-cobalt.png" alt="COBALT: широкая доска задач с пятью статусами и боковой панелью подробностей в оттенках индиго и фиолетового."></a>
+</section>
+</main>
+<footer><span>Выбор: мышью или стрелками клавиатуры после Tab.</span><span>21 октября 2026 · 5 новых концепций</span></footer>
+</div>
+</body>
+</html>

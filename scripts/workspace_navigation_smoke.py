@@ -146,7 +146,7 @@ def main():
                 page.locator('.sidebar').get_by_role('button', name='Обзор', exact=True).click()
                 wait_saved(page, {'view': 'overview'})
                 page.reload()
-                expect(page.get_by_role('heading', name='Вся работа на виду', exact=False)).to_be_visible()
+                expect(page.get_by_role('heading', name='Обзор.', exact=True)).to_be_visible()
                 checks.append('Per-project tabs and board preferences remain independent; workspace overview survives reload')
 
                 snapshot = saved(page)

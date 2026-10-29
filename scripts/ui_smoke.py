@@ -83,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(dialog.locator('.task-properties').get_by_text('Исследование',exact=True)).to_be_visible()
                 checks.append('fresh project creates a typed task directly without a section gate')
 
-                header_edit=dialog.locator('.task-detail-heading').get_by_role('button')
+                header_edit=dialog.get_by_role('button',name=re.compile(r'^(Редактировать задачу|Отменить редактирование)$'))
                 before_cancel=request('/tasks/'+task['id'])
                 for width in (1440,390,320):
                     page.set_viewport_size({'width':width,'height':1000 if width==1440 else 844})
@@ -268,7 +268,10 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(page.locator('.map-meta')).to_contain_text('Проверено человеком')
                 page.locator('.project-tabs').get_by_role('button',name='Архитектура',exact=True).click()
                 for item in manifest['diagrams']:
-                    page.get_by_role('combobox',name='Схема / нотация',exact=True).select_option(item['id'])
+                    library=page.locator('.architecture-library')
+                    if not library.evaluate('element=>element.open'):
+                        library.locator('summary').click()
+                    page.get_by_role('list',name='Схемы проекта',exact=True).get_by_role('button',name=re.compile('^'+re.escape(item['title'])+' ·')).click()
                     expect(page.locator('.map-diagram iframe')).to_have_count(1,timeout=30000)
                     expect(page.locator('.map-diagram iframe')).to_have_attribute('sandbox','')
                     expect(page.locator('.map-file-article h2')).to_have_text(item['title'])
@@ -410,10 +413,17 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                 expect(page.locator('.integration-row').first.get_by_label('Personal Access Token',exact=True)).to_have_attribute('type','password')
                 page.once('dialog',lambda value:value.accept())
                 page.locator('.project-tabs').get_by_role('button',name='Модули',exact=True).click()
+                panel_rgb=page.evaluate("""() => {
+                    const probe=document.createElement('span');
+                    probe.hidden=true; probe.style.backgroundColor='var(--panel)';
+                    document.body.append(probe);
+                    const color=getComputedStyle(probe).backgroundColor;
+                    probe.remove(); return color;
+                }""")
                 for width in (1440,390,320):
                     page.set_viewport_size({'width':width,'height':1000 if width==1440 else 844})
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Module reflow {width}'
-                    assert page.locator('.module-search input').evaluate("node=>getComputedStyle(node).backgroundColor")=='rgb(13, 21, 32)'
+                    assert page.locator('.module-search input').evaluate("node=>getComputedStyle(node).backgroundColor")==panel_rgb
                     if width<700:
                         tops=page.locator('.tabs-nav>button').evaluate_all('nodes=>nodes.map(node=>node.getBoundingClientRect().top)')
                         assert max(tops)-min(tops)<1, f'Project tabs wrap at {width}: {tops}'
@@ -421,7 +431,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-ui-') as directory:
                     page.screenshot(path=str(ARTIFACTS/f'workspace-modules-{width}.png'),full_page=True)
                     page.locator('.project-tabs').get_by_role('button',name='Интеграции',exact=True).click()
                     expect(page.locator('.integration-row')).to_have_count(2)
-                    assert page.locator('.integration-form input[type=password]').first.evaluate("node=>getComputedStyle(node).backgroundColor")=='rgb(13, 21, 32)'
+                    assert page.locator('.integration-form input[type=password]').first.evaluate("node=>getComputedStyle(node).backgroundColor")==panel_rgb
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), f'Integration reflow {width}'
                     page.screenshot(path=str(ARTIFACTS/f'workspace-integrations-{width}.png'),full_page=True)
                     page.locator('.project-tabs').get_by_role('button',name='Модули',exact=True).click()

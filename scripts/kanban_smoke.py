@@ -169,6 +169,8 @@ with tempfile.TemporaryDirectory(prefix='agentboard-kanban-') as directory:
                 page.screenshot(path=str(ARTIFACTS / 'kanban-desktop.png'), full_page=True)
                 checks.append('default whole-project columns contain each directly created typed task once without sections')
 
+                filters_before = request('/projects/' + project['id'])['tasks']
+                page.get_by_role('button', name='Фильтры', exact=True).click()
                 type_filter = page.get_by_role('combobox', name='Фильтр типа задачи')
                 type_filter.select_option('research')
                 expect(page.locator('.kanban-card')).to_have_count(2)
@@ -179,12 +181,21 @@ with tempfile.TemporaryDirectory(prefix='agentboard-kanban-') as directory:
                 page.get_by_role('button', name='Показать список', exact=True).click()
                 page.get_by_role('combobox', name='Фильтр статуса').select_option('done')
                 expect(page.locator('.task-card')).to_have_count(1)
+                list_ids = page.locator('.task-card').evaluate_all('items => items.map(item => item.dataset.taskId).sort()')
+                assert list_ids == sorted(task['id'] for task in tasks.values() if task['status'] == 'done')
                 expect(page.locator('.board-section')).to_have_count(0)
                 page.get_by_role('button', name='Показать доску', exact=True).click()
-                expect(page.get_by_role('combobox', name='Фильтр статуса')).to_have_count(0)
+                status_filter = page.get_by_role('combobox', name='Фильтр статуса')
+                expect(status_filter).to_have_value('done')
+                expect(page.locator('.kanban-card')).to_have_count(1)
+                assert page.locator('.kanban-card').evaluate_all('items => items.map(item => item.dataset.taskId).sort()') == list_ids
+                expect(columns).to_have_count(1)
+                expect(columns).to_have_attribute('data-status', 'done')
+                status_filter.select_option('')
                 expect(page.locator('.kanban-card')).to_have_count(len(tasks))
                 expect(columns).to_have_count(5)
-                checks.append('type filtering preserves five columns; flat list status filter never hides board tasks')
+                assert request('/projects/' + project['id'])['tasks'] == filters_before
+                checks.append('type filtering preserves five columns; status filtering preserves the same task IDs across list/board, and reset restores all tasks without mutation')
 
                 task = tasks['Cancel']
                 original = detail(task)
@@ -195,6 +206,12 @@ with tempfile.TemporaryDirectory(prefix='agentboard-kanban-') as directory:
                 expect(dialog.get_by_label('Почему перемещаем задачу')).to_be_focused()
                 assert detail(task) == original
                 dialog.get_by_label('Почему перемещаем задачу').fill('Canceled reason')
+                page.once('dialog', lambda confirmation: confirmation.dismiss())
+                dialog.get_by_role('button', name='Отмена', exact=True).click()
+                expect(dialog).to_be_visible()
+                expect(dialog.get_by_label('Почему перемещаем задачу')).to_have_value('Canceled reason')
+                assert detail(task) == original
+                page.once('dialog', lambda confirmation: confirmation.accept())
                 dialog.get_by_role('button', name='Отмена', exact=True).click()
                 expect(dialog).to_have_count(0)
                 assert detail(task) == original
@@ -210,6 +227,7 @@ with tempfile.TemporaryDirectory(prefix='agentboard-kanban-') as directory:
                 expect(dialog.get_by_role('alert')).to_contain_text('проверки')
                 expect(dialog.get_by_role('button', name='Обновить данные')).to_have_count(0)
                 assert detail(task) == original
+                page.once('dialog', lambda confirmation: confirmation.accept())
                 dialog.get_by_role('button', name='Отмена', exact=True).click()
                 checks.append('completion evidence gate rejects a board move without a successful audit event')
 

@@ -16,8 +16,10 @@ import {
   Blocks,
   Check,
   CheckCheck,
+  CircleCheck,
   ChevronRight,
   Circle,
+  Clock3,
   Clipboard,
   Code2,
   FileCode2,
@@ -36,7 +38,9 @@ import {
   Search,
   SlidersHorizontal,
   ShieldCheck,
+  Settings2,
   Sparkles,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import {
@@ -53,6 +57,7 @@ import {
   type Agent,
   type Board,
   type Bootstrap,
+  type OverviewData,
   type Connectors,
   type Detail,
   type Event,
@@ -67,7 +72,10 @@ import ProjectModules from './ProjectModules';
 import ProjectIntegrations from './ProjectIntegrations';
 import ProjectReleases from './ProjectReleases';
 import AssigneeSelect from './AssigneeSelect';
+import ThemePicker from './ThemePicker';
 import './task-review.css';
+import './task-workspace.css';
+import './overview.css';
 import { insideVSCode, hostRequest, writeClipboard } from "./host";
 import { defaultProjectWorkspace, isProjectView as projectView, saveWorkspace, taskFromUrl, taskLink, validId, type ProjectWorkspace, type Workspace, type View } from "./workspace";
 const ProjectMap = lazy(() => import('./ProjectMap'));
@@ -150,12 +158,14 @@ function Dialog({
   children,
   onClose,
   drawer = false,
+  docked = false,
   busy = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   drawer?: boolean;
+  docked?: boolean;
   busy?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null),
@@ -163,13 +173,38 @@ function Dialog({
     closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
+    const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
-    ref.current?.showModal();
-    return () => {
-      ref.current?.close();
-      previous?.focus();
+    const media = window.matchMedia("(min-width: 1280px)");
+    const present = () => {
+      const focused = dialog.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
+      if (dialog.open) dialog.close();
+      const inline = docked && media.matches;
+      dialog.classList.toggle("is-docked", inline);
+      dialog.setAttribute("aria-modal", String(!inline));
+      if (inline) dialog.show(); else dialog.showModal();
+      focused?.focus({ preventScroll: true });
     };
-  }, []);
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented && dialog.classList.contains("is-docked") && !document.querySelector("dialog:modal")) {
+        event.preventDefault();
+        closeRef.current();
+      }
+    };
+    present();
+    if (docked) media.addEventListener("change", present);
+    window.addEventListener("keydown", escape);
+    return () => {
+      const restore = dialog.contains(document.activeElement) || document.activeElement === document.body;
+      media.removeEventListener("change", present);
+      window.removeEventListener("keydown", escape);
+      dialog.close();
+      if (restore && previous?.isConnected) {
+        const collapsed = previous.closest("details:not([open])");
+        (collapsed?.querySelector("summary") || previous).focus({ preventScroll: true });
+      }
+    };
+  }, [docked]);
   return (
     <dialog
       ref={ref}
@@ -180,7 +215,7 @@ function Dialog({
         if (!busy) closeRef.current();
       }}
       onClick={(e) => {
-        if (!busy && e.target === e.currentTarget) closeRef.current();
+        if (!busy && e.target === e.currentTarget && e.currentTarget.matches(":modal")) closeRef.current();
       }}
     >
       <div className="dialog-inner">
@@ -737,6 +772,7 @@ function TaskDrawer({
   onRefresh,
   onChanged,
   onCopyLink,
+  docked,
 }: {
   detail: Detail;
   board: Board;
@@ -745,6 +781,7 @@ function TaskDrawer({
   onRefresh: () => Promise<Detail | null>;
   onChanged: () => Promise<void>;
   onCopyLink: () => void;
+  docked: boolean;
 }) {
   const [edit, setEdit] = useState(false),
     [busy, setBusy] = useState(false),
@@ -754,10 +791,17 @@ function TaskDrawer({
     key = useRef(crypto.randomUUID()),
     noteKey = useRef(crypto.randomUUID()),
     editBaseline = useRef(task),
-    editButton = useRef<HTMLButtonElement>(null);
+    editButton = useRef<HTMLButtonElement>(null),
+    focusAfterEdit = useRef(false);
   const [saveVersion, setSaveVersion] = useState(task.version);
   const editDraft = useFormDraft(busy), noteDraft = useFormDraft(busy);
   const latestEvidenceRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (focusAfterEdit.current && !edit && !busy) {
+      focusAfterEdit.current = false;
+      editButton.current?.focus();
+    }
+  }, [edit, busy]);
   function canDiscardDraft() {
     return !busy && (!(editDraft.isDirty() || noteDraft.isDirty()) || window.confirm("Есть несохранённые изменения. Продолжить без сохранения?"));
   }
@@ -770,9 +814,9 @@ function TaskDrawer({
     editButton.current?.focus();
   }
   function finishEdit() {
+    focusAfterEdit.current = true;
     setEdit(false);
     setError("");
-    requestAnimationFrame(() => editButton.current?.focus());
   }
   function cancelEdit() {
     if (canDiscardDraft()) finishEdit();
@@ -908,7 +952,7 @@ function TaskDrawer({
     });
   }
   return (
-    <Dialog title={task.short_id} onClose={() => { if (canDiscardDraft()) onClose(); }} busy={busy} drawer>
+    <Dialog title={task.short_id} onClose={() => { if (canDiscardDraft()) onClose(); }} busy={busy} drawer docked={docked}>
       <div className="drawer-body">
         <div className="drawer-breadcrumb">
           <FolderKanban size={13} />
@@ -918,6 +962,9 @@ function TaskDrawer({
         </div>
         <div className="task-detail-heading">
           <h3>{task.title}</h3>
+          <button className="icon-button task-copy-link" onClick={onCopyLink} aria-label="Скопировать ссылку на задачу" title="Скопировать ссылку на задачу в этом локальном пространстве">
+            <Link2 size={17} />
+          </button>
           <button
             ref={editButton}
             className="icon-button"
@@ -945,9 +992,6 @@ function TaskDrawer({
         <div className="version-line">
           Версия {task.version} · обновлено {date(task.updated_at)} · МСК
         </div>
-        <button className="button secondary task-copy-link" onClick={onCopyLink} title="Ссылка на задачу в этом локальном пространстве">
-          <Link2 size={15} />Скопировать ссылку на задачу
-        </button>
         {task.claim_owner_id &&
           task.claim_expires_at &&
           new Date(task.claim_expires_at) > new Date() && (
@@ -960,23 +1004,6 @@ function TaskDrawer({
               </span>
             </div>
           )}
-        {!edit && <section className="task-review" aria-label="Готовность к завершению">
-          <h4>Результат и проверка</h4>
-          <ul className="task-readiness">
-            <li>{task.acceptance_criteria.trim() ? <CheckCheck size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}<span>{task.acceptance_criteria.trim() ? "Критерии заданы" : "Добавьте критерии готовности"}</span></li>
-            <li>{evidence ? <CheckCheck size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}<span>{evidence ? "Проверка приложена" : "Проверка пока не приложена"}</span></li>
-            {waiting.length > 0 && <li className="task-readiness-waiting"><GitBranch size={15} aria-hidden="true" /><span>Незавершённых зависимостей: {waiting.length}</span></li>}
-          </ul>
-          {evidence ? <div className="latest-evidence">
-            <p className="latest-evidence-body">{evidence.body}</p>
-            <p className="latest-evidence-author">{agentName(agents, evidence.actor_id)} · <time dateTime={evidence.created_at}>{date(evidence.created_at)} · МСК</time></p>
-            <span className="muted">Запись автора; DashAI не выполняет проверки.</span>
-          </div> : <p className="task-review-hint">Перед завершением укажите, что проверили и какой результат получили.</p>}
-          <div className="task-review-actions">
-            <button type="button" className="text-button" disabled={busy} onClick={() => showNotes(!evidence)}>{evidence ? "К записям и проверкам" : "Добавить проверку"}<ArrowRight size={14} aria-hidden="true" /></button>
-            {!task.acceptance_criteria.trim() && <button type="button" className="text-button" disabled={busy} onClick={beginEdit}>Добавить критерии</button>}
-          </div>
-        </section>}
         {edit ? (
           <form ref={editDraft.ref} onSubmit={update} className="edit-form" aria-busy={busy}>
             <fieldset className="draft-fields" disabled={busy}>
@@ -1092,7 +1119,7 @@ function TaskDrawer({
               </h4>
               <p>{task.rationale}</p>
             </div>
-            <div className="detail-section">
+            <div className="detail-section criteria-section">
               <h4>
                 <CheckCheck size={15} />
                 Критерии готовности
@@ -1102,6 +1129,23 @@ function TaskDrawer({
                   "Критерии не заданы. Добавьте их перед завершением."}
               </p>
             </div>
+            <section className="task-review" aria-label="Готовность к завершению">
+              <h4>Результат и проверка</h4>
+              <ul className="task-readiness">
+                <li>{task.acceptance_criteria.trim() ? <CheckCheck size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}<span>{task.acceptance_criteria.trim() ? "Критерии заданы" : "Добавьте критерии готовности"}</span></li>
+                <li>{evidence ? <CheckCheck size={15} aria-hidden="true" /> : <Circle size={15} aria-hidden="true" />}<span>{evidence ? "Проверка приложена" : "Проверка пока не приложена"}</span></li>
+                {waiting.length > 0 && <li className="task-readiness-waiting"><GitBranch size={15} aria-hidden="true" /><span>Незавершённых зависимостей: {waiting.length}</span></li>}
+              </ul>
+              {evidence ? <div className="latest-evidence">
+                <p className="latest-evidence-body">{evidence.body}</p>
+                <p className="latest-evidence-author">{agentName(agents, evidence.actor_id)} · <time dateTime={evidence.created_at}>{date(evidence.created_at)} · МСК</time></p>
+                <span className="muted">Запись автора; DashAI не выполняет проверки.</span>
+              </div> : <p className="task-review-hint">Перед завершением укажите, что проверили и какой результат получили.</p>}
+              <div className="task-review-actions">
+                <button type="button" className="text-button" disabled={busy} onClick={() => showNotes(!evidence)}>{evidence ? "К записям и проверкам" : "Добавить проверку"}<ArrowRight size={14} aria-hidden="true" /></button>
+                {!task.acceptance_criteria.trim() && <button type="button" className="text-button" disabled={busy} onClick={beginEdit}>Добавить критерии</button>}
+              </div>
+            </section>
             {task.depends_on.length > 0 && (
               <div className="detail-section">
                 <h4>
@@ -1478,6 +1522,127 @@ function ConnectorView({
   );
 }
 
+function Overview({ bootstrap, onProject, onTask, onCreate, onHistory }: {
+  bootstrap: Bootstrap;
+  onProject: (id: string) => void;
+  onTask: (id: string) => void;
+  onCreate: () => void;
+  onHistory: () => void;
+}) {
+  const [status, setStatus] = useState<Status | 'attention' | 'active'>('attention');
+  const [projectId, setProjectId] = useState(''), [query, setQuery] = useState('');
+  const [offset, setOffset] = useState(0), [retry, setRetry] = useState(0);
+  const [expandedProjects, setExpandedProjects] = useState(false);
+  const [result, setResult] = useState<{ key: string; scope: string; status: typeof status; data: OverviewData } | null>(null);
+  const [error, setError] = useState('');
+  const scope = new URLSearchParams({ ...(projectId ? { project_id: projectId } : {}), q: query.trim() }).toString();
+  const requestKey = `${scope}&status=${status}&offset=${offset}&limit=12`;
+  const data = result?.key === requestKey ? result.data : null;
+  const page = result?.scope === scope && result.status === status ? result.data : null;
+  const counts = result?.scope === scope ? result.data.counts : null;
+  useEffect(() => {
+    let current = true;
+    setError('');
+    api<OverviewData>(`/overview?${requestKey}`).then(next => {
+      if (!current) return;
+      if (offset > 0 && offset >= next.total) {
+        setOffset(Math.max(0, Math.floor((next.total - 1) / next.limit) * next.limit));
+        return;
+      }
+      setResult({ key: requestKey, scope, status, data: next });
+    }).catch(error => { if (current) setError(error.message); });
+    return () => { current = false; };
+  }, [bootstrap, requestKey, scope, status, offset, retry]);
+  const filters: { value: typeof status; label: string; count: number | undefined }[] = [
+    { value: 'attention', label: 'Требует внимания', count: counts ? counts.blocked + counts.review : undefined },
+    { value: 'review', label: 'Проверка', count: counts?.review },
+    { value: 'blocked', label: 'Блокировка', count: counts?.blocked },
+    { value: 'in_progress', label: 'В работе', count: counts?.in_progress },
+    { value: 'active', label: 'Все открытые', count: counts ? counts.backlog + counts.in_progress + counts.review + counts.blocked : undefined },
+    { value: 'backlog', label: 'Очередь', count: counts?.backlog },
+    { value: 'done', label: 'Готово', count: counts?.done },
+  ];
+  const projectSummaries = new Map(result?.data.projects.map(project => [project.id, project]));
+  const projects = [...bootstrap.projects].sort((a, b) => {
+    const first = projectSummaries.get(a.id)?.counts, second = projectSummaries.get(b.id)?.counts;
+    return (second ? second.blocked + second.review : 0) - (first ? first.blocked + first.review : 0);
+  });
+  const changeStatus = (next: typeof status) => { setStatus(next); setOffset(0); };
+  return <div className="workspace-overview">
+    <div className="page-heading">
+      <div><h1>Обзор<span className="heading-dot">.</span></h1><p>Сначала — задачи на проверке и блокировки. Затем — текущая работа.</p></div>
+      <button className="button primary" onClick={onCreate}><Plus size={16} aria-hidden="true"/>Новый проект</button>
+    </div>
+    <div className="overview-layout">
+      <section className="overview-tasks overview-panel" aria-labelledby="overview-tasks-heading">
+        <div className="overview-section-heading"><h2 id="overview-tasks-heading">Задачи</h2><span className="overview-scope">{projectId ? 'Выбранный проект' : 'Все проекты'}</span></div>
+        <div className="overview-filters">
+          <label className="overview-search"><span className="sr-only">Поиск задач в обзоре</span><Search size={16} aria-hidden="true"/><input type="search" value={query} maxLength={200} placeholder="Найти задачу или ID" onChange={event => { setQuery(event.target.value); setOffset(0); }}/></label>
+          <label className="overview-project-filter"><span className="sr-only">Проект в обзоре</span><select value={projectId} onChange={event => { setProjectId(event.target.value); setOffset(0); }}><option value="">Все проекты</option>{bootstrap.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+        </div>
+        <div className="overview-status-filters" role="group" aria-label="Статус задач в обзоре">
+          {filters.map(filter => <button key={filter.value} aria-pressed={status === filter.value} onClick={() => changeStatus(filter.value)}>{filter.label}<span>{filter.count ?? '—'}</span></button>)}
+        </div>
+        <label className="overview-mobile-status"><span className="sr-only">Статус задач</span><select value={status} onChange={event => changeStatus(event.target.value as typeof status)}>{filters.map(filter => <option key={filter.value} value={filter.value}>{filter.label} · {filter.count ?? '—'}</option>)}</select></label>
+        <p className="overview-sort">Сначала блокировки, затем проверка; внутри статуса — по приоритету и обновлению.</p>
+        {error && <ErrorBox message={`Не удалось обновить обзор. ${error}`} onRefresh={() => setRetry(value => value + 1)}/>}
+        <div className="overview-result-summary" role="status" aria-live="polite">
+          {data ? data.total ? `Показаны ${data.offset + 1}–${Math.min(data.offset + data.limit, data.total)} из ${data.total}` : 'Задач не найдено' : error ? 'Данные недоступны' : 'Загружаем задачи…'}
+        </div>
+        {data && data.tasks.length > 0 && <ul className="overview-task-list">
+          {data.tasks.map(task => <li key={task.id}>
+            <button className="overview-task-row" data-task-id={task.id} onClick={() => onTask(task.id)} aria-labelledby={`overview-${task.id}-title`} aria-describedby={`overview-${task.id}-status overview-${task.id}-meta`}>
+              <span className="overview-task-title" id={`overview-${task.id}-title`}><span className="sr-only">Открыть задачу </span><span className="overview-task-id">{task.short_id}</span><strong>{task.title}</strong></span>
+              <span id={`overview-${task.id}-status`}><StatusPill status={task.status}/></span>
+              <span className="overview-task-meta" id={`overview-${task.id}-meta`}>
+                <span className="overview-task-project">{bootstrap.projects.find(project => project.id === task.project_id)?.name}</span>
+                <PriorityMark priority={task.priority} label/>
+                <span className="overview-task-assignee"><Avatar small agent={bootstrap.agents.find(agent => agent.id === task.assignee_id)}/>{agentName(bootstrap.agents, task.assignee_id)}</span>
+                <time dateTime={task.updated_at} title={`Обновлена ${date(task.updated_at, true)}`}>{date(task.updated_at)}</time>
+              </span>
+            </button>
+          </li>)}
+        </ul>}
+        {data && !data.tasks.length && <div className="overview-empty">
+          <CircleCheck size={26} aria-hidden="true"/>
+          <h3>{status === 'attention' && !query.trim() ? 'Нет задач, требующих внимания' : 'Нет задач по этим условиям'}</h3>
+          <p>{status === 'attention' ? 'Здесь появляются задачи со статусом «Проверка» или «Блокировка».' : 'Выберите другой статус, проект или измените поиск.'}</p>
+          <div>{status !== 'active' && <button className="button secondary" onClick={() => changeStatus('active')}>Показать все открытые</button>}{(projectId || query) && <button className="text-button" onClick={() => { setProjectId(''); setQuery(''); setOffset(0); }}>Сбросить поиск и проект</button>}</div>
+        </div>}
+        {page && page.total > page.limit && <nav className="overview-pagination" aria-label="Страницы задач в обзоре">
+          <button className="button secondary" aria-disabled={!data || page.offset === 0} onClick={() => { if (data && data.offset > 0) setOffset(data.offset - data.limit); }}>Назад</button>
+          <span>{Math.floor(page.offset / page.limit) + 1} / {Math.ceil(page.total / page.limit)}</span>
+          <button className="button secondary" aria-disabled={!data || page.offset + page.limit >= page.total} onClick={() => { if (data && data.offset + data.limit < data.total) setOffset(data.offset + data.limit); }}>Далее</button>
+        </nav>}
+        {result && <p className="overview-updated">Данные обновлены <time dateTime={result.data.updated_at}>{date(result.data.updated_at)}</time>{error && ' · показана последняя доступная версия'}</p>}
+      </section>
+      <section className="overview-projects overview-panel" aria-labelledby="overview-projects-heading">
+        <div className="overview-section-heading"><h2 id="overview-projects-heading">Проекты</h2><span className="overview-scope">{projects.length}</span></div>
+        <p className="overview-projects-hint">Все проекты. Сначала те, где нужна проверка или есть блокировки.</p>
+        <ul id="overview-project-list" className="overview-project-list">
+          {(expandedProjects ? projects : projects.slice(0, 6)).map(project => {
+            const summary = projectSummaries.get(project.id);
+            return <li key={project.id}>
+              <button className="overview-project-link" onClick={() => onProject(project.id)} aria-label={`Открыть проект ${project.name}`}><span className="project-dot" style={{ background: project.color }}/><strong>{project.name}</strong><ArrowUpRight size={16} aria-hidden="true"/></button>
+              {summary ? <dl className="overview-project-counts">
+                <div><dt>Открыто</dt><dd>{summary.total - summary.counts.done}</dd></div>
+                <div className={summary.counts.review ? 'has-review' : ''}><dt>Проверка</dt><dd>{summary.counts.review}</dd></div>
+                <div className={summary.counts.blocked ? 'has-blocked' : ''}><dt>Блокировки</dt><dd>{summary.counts.blocked}</dd></div>
+                <div><dt>Готово</dt><dd>{summary.counts.done}</dd></div>
+              </dl> : <p className="overview-project-pending">{error ? 'Статусы недоступны' : 'Загружаем статусы…'}</p>}
+            </li>;
+          })}
+        </ul>
+        {projects.length > 6 && <button className="overview-expand text-button" aria-expanded={expandedProjects} aria-controls="overview-project-list" onClick={() => setExpandedProjects(value => !value)}>{expandedProjects ? 'Свернуть проекты' : `Показать все проекты (${projects.length})`}</button>}
+      </section>
+    </div>
+    <details className="overview-recent overview-panel">
+      <summary>Последние действия <span>{bootstrap.activity.slice(0, 5).length}</span></summary>
+      <div className="overview-recent-body"><button className="text-button" onClick={onHistory}>Вся история<ArrowRight size={14} aria-hidden="true"/></button><Events events={bootstrap.activity.slice(0, 5)} agents={bootstrap.agents} onTask={onTask}/></div>
+    </details>
+  </div>;
+}
+
 export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: { initialWorkspace: Workspace; initialWorkspaceWarning?: string }) {
   const initialProject = initialWorkspace.projects[initialWorkspace.projectId || ""] || defaultProjectWorkspace;
   const [bootstrap, setBootstrap] = useState(emptyBootstrap),
@@ -1513,6 +1678,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
     if (next === view) return;
     if (!canNavigate(!withinMap)) return;
     if (!withinMap) setMapDirty(false);
+    if (routeTaskId !== null) navigateTask(null, "push", true);
     setViewState(next);
   }
   const [query, setQuery] = useState(initialProject.query),
@@ -1616,7 +1782,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
         const context = await api<Board>(`/projects/${result.task.project_id}`);
         if (sequence !== detailSequence.current) return;
         if (result.task.project_id !== projectRef.current) {
-          applyProject(result.task.project_id);
+          applyProject(result.task.project_id, view !== 'overview');
           setMapDirty(false);
         }
         setBoard(context); setDrawerBoard(context); setDetail(result);
@@ -1630,7 +1796,8 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
   useEffect(()=>{
     if(!mobileMenu)return;
     const sidebar=sidebarRef.current;
-    const controls=()=>Array.from(sidebar?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input, select, [tabindex="0"]')||[]);
+    const controls=()=>Array.from(sidebar?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex="0"]')||[])
+      .filter(element=>!(element instanceof HTMLInputElement)||element.type!=='radio'||element.checked);
     controls()[0]?.focus();
     const keyboard=(event:KeyboardEvent)=>{
       if(event.key==='Escape'){event.preventDefault();setMobileMenu(false);}
@@ -1770,6 +1937,11 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
   function openTask(id: string) {
     navigateTask(id);
   }
+  function openEntity(next: Modal) {
+    if (!canNavigate()) return;
+    if (routeTaskId !== null) navigateTask(null, "push", true);
+    setModal(next);
+  }
   async function copyTaskLink() {
     if (!detail) return;
     try {
@@ -1889,21 +2061,11 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
             setMobileMenu(false);
           }}
         >
-          <span className="brand-mark">
-            <Blocks size={22} />
-          </span>
+          <span className="brand-mark" aria-hidden="true" />
           <span>
             DashAI<span className="brand-period">.</span>
           </span>
         </button>
-        <div className="workspace-switch">
-          <span className="workspace-icon">D</span>
-          <div>
-            <strong>Мое пространство</strong>
-            <span>Человек + агенты</span>
-          </div>
-          <span className="local-indicator" title="Локальное пространство" />
-        </div>
         <div className="nav-caption">ПРОСТРАНСТВО</div>
         <nav aria-label="Рабочее пространство">
           <button
@@ -1956,7 +2118,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
           ПРОЕКТЫ
           <button
             className="icon-button"
-            onClick={() => setModal({ kind: "project" })}
+            onClick={() => openEntity({ kind: "project" })}
             aria-label="Создать проект"
           >
             <Plus size={15} />
@@ -1985,27 +2147,13 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
           )}
           <button
             className="create-project"
-            onClick={() => setModal({ kind: "project" })}
+            onClick={() => openEntity({ kind: "project" })}
           >
             <Plus size={14} />
             Новый проект
           </button>
         </nav>
-        <div className="sidebar-bottom">
-          <div className="local-server">
-            <span className={`status-dot ${syncError ? "offline" : "seen"}`} />
-            <span>{syncError ? "Не удалось обновить" : "Локальный сервер"}</span>
-            <span className="server-port">API</span>
-          </div>
-          <div className="profile">
-            <Avatar agent={bootstrap.agents.find((a) => a.kind === "human")} />
-            <div>
-              <strong>Вы и ваши агенты</strong>
-              <span>Общая память работы</span>
-            </div>
-            <span className="profile-badge">01</span>
-          </div>
-        </div>
+        <ThemePicker />
       </aside>
       {mobileMenu && (
         <button
@@ -2059,6 +2207,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
         </header>
         <main
           id="main"
+          tabIndex={-1}
           className={`main-content ${isProjectView ? "project-content" : ""}`}
         >
           {error && <ErrorBox message={error} onRefresh={() => refresh()} />}
@@ -2089,7 +2238,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                 </p>
                 <button
                   className="button primary"
-                  onClick={() => setModal({ kind: "project" })}
+                  onClick={() => openEntity({ kind: "project" })}
                 >
                   <Plus size={17} />
                   Создать первый проект
@@ -2121,69 +2270,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
             <ConnectorView agents={bootstrap.agents} notify={notify} />
           )}
           {view === "overview" && bootstrap.projects.length > 0 && (
-            <>
-              <div className="page-kicker">
-                <LayoutDashboard size={14} />
-                РАБОЧЕЕ ПРОСТРАНСТВО
-              </div>
-              <div className="page-heading">
-                <div>
-                  <h1>
-                    Вся работа на виду<span className="heading-dot">.</span>
-                  </h1>
-                  <p>Проекты, агенты и решения — в одном пространстве.</p>
-                </div>
-                <button
-                  className="button primary"
-                  onClick={() => setModal({ kind: "project" })}
-                >
-                  <Plus size={16} />
-                  Новый проект
-                </button>
-              </div>
-              <div className="overview-grid">
-                {bootstrap.projects.map((p) => (
-                  <button
-                    className="project-overview"
-                    key={p.id}
-                    onClick={() => selectProject(p.id)}
-                  >
-                    <span
-                      className="project-overview-icon"
-                      style={{ color: p.color }}
-                    >
-                      <FolderKanban size={23} />
-                    </span>
-                    <ArrowUpRight className="overview-arrow" size={18} />
-                    <h2>{p.name}</h2>
-                    <p>
-                      {p.description || "Контекст проекта еще не добавлен."}
-                    </p>
-                    <footer>
-                      <span>Открыть доску</span>
-                      <span>{date(p.updated_at)}</span>
-                    </footer>
-                  </button>
-                ))}
-              </div>
-              <div className="overview-activity">
-                <div className="subheading">
-                  <h2>Последние действия</h2>
-                  <button
-                    className="text-button"
-                    onClick={() => setView("history")}
-                  >
-                    Вся история
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-                <Events
-                  events={bootstrap.activity.slice(0, 10)}
-                  agents={bootstrap.agents}
-                  onTask={openTask}
-                />
-              </div>
-            </>
+            <Overview bootstrap={bootstrap} onProject={selectProject} onTask={openTask} onCreate={() => openEntity({ kind: 'project' })} onHistory={() => setView('history')}/>
           )}
           {isProjectView && board && (
             <>
@@ -2194,15 +2281,12 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                     <button
                       className="icon-button"
                       aria-label="Редактировать проект"
-                      onClick={() => setModal({ kind: "project", project })}
+                      onClick={() => openEntity({ kind: "project", project })}
                     >
                       <Pencil size={16} />
                     </button>
                   </h1>
-                  {view === 'documentation' ? <details className="project-doc-description"><summary>Описание проекта</summary><p>{project?.description || 'Описание проекта пока не заполнено.'}</p></details> : <p>
-                    {project?.description ||
-                      "Добавьте цель проекта, чтобы агенты понимали контекст работы."}
-                  </p>}
+                  <details className="project-doc-description"><summary>Описание проекта</summary><p>{project?.description || 'Описание проекта пока не заполнено.'}</p></details>
                   {project?.repository && (
                     <div className="repository">
                       <GitBranch size={13} />
@@ -2213,7 +2297,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                   )}
                 </div>
                 <div className="project-actions">
-                  <button className="button secondary" onClick={() => setModal({ kind: "subproject" })}><GitBranch size={15} />Подпроект</button>
+                  <button className="button secondary" onClick={() => openEntity({ kind: "subproject" })}><GitBranch size={15} />Подпроект</button>
                   <button
                     className="button secondary"
                     onClick={exportProject}
@@ -2224,7 +2308,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                   </button>
                   <button
                     className="button primary"
-                    onClick={() => setModal({ kind: "task", subproject_id: subprojectFilter === "unassigned" ? "" : subprojectFilter })}
+                    onClick={() => openEntity({ kind: "task", subproject_id: subprojectFilter === "unassigned" ? "" : subprojectFilter })}
                   >
                     <Plus size={17} />
                     Новая задача
@@ -2279,8 +2363,8 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                     <div className="subprojects-list">{[...board.subprojects].sort((a, b) => subprojectPath(board.subprojects, a.id).localeCompare(subprojectPath(board.subprojects, b.id), "ru")).map((s) => <div key={s.id}>
                       <button className="text-button" onClick={() => setSubprojectFilter(s.id)} title={s.description}>{subprojectPath(board.subprojects, s.id)}</button>
                       <span className="muted">{board.tasks.filter((t) => inSubproject(board.subprojects, t.subproject_id, s.id)).length} задач</span>
-                      <button className="icon-button" aria-label={`Добавить вложенный подпроект в ${s.title}`} onClick={() => setModal({ kind: "subproject", parent_id: s.id })}><Plus size={14} /></button>
-                      <button className="icon-button" aria-label={`Изменить подпроект ${s.title}`} onClick={() => setModal({ kind: "subproject", subproject: s })}><Pencil size={14} /></button>
+                      <button className="icon-button" aria-label={`Добавить вложенный подпроект в ${s.title}`} onClick={() => openEntity({ kind: "subproject", parent_id: s.id })}><Plus size={14} /></button>
+                      <button className="icon-button" aria-label={`Изменить подпроект ${s.title}`} onClick={() => openEntity({ kind: "subproject", subproject: s })}><Pencil size={14} /></button>
                     </div>)}</div>
                   </details>}
                   <div className="board-toolbar">
@@ -2402,7 +2486,7 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                       <FolderKanban size={28} aria-hidden="true" />
                       <h2>С чего начнём этот проект?</h2>
                       <p>Добавьте первую задачу: что нужно сделать, зачем и какой результат вы ожидаете.</p>
-                      <button className="button primary" onClick={() => setModal({ kind: "task", subproject_id: subprojectFilter === "unassigned" ? "" : subprojectFilter })}><Plus size={16} />Создать первую задачу</button>
+                      <button className="button primary" onClick={() => openEntity({ kind: "task", subproject_id: subprojectFilter === "unassigned" ? "" : subprojectFilter })}><Plus size={16} />Создать первую задачу</button>
                       <span>Назначение исполнителя сохраняет ответственность. Агент начинает работу в своём MCP-клиенте.</span>
                     </div>
                   ) : filters && !tasks.length ? (
@@ -2417,14 +2501,25 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                   ) : !listView ? (
                     <KanbanBoard key={board.project.id} tasks={tasks} agents={bootstrap.agents} subprojects={board.subprojects || []}
                       statusFilter={statusFilter as Status | ""} filterKey={[query.trim(), taskTypeFilter, subprojectFilter, agentFilter, statusFilter, priorityFilter].join("\n")}
-                      onOpen={openTask} onMove={(task, status) => setMove({ task, status })} />
+                      onOpen={openTask} onMove={(task, status) => {
+                        if (!canNavigate()) return;
+                        if (routeTaskId !== null) navigateTask(null, "push", true);
+                        setMove({ task, status });
+                      }} />
                   ) : (
                     <div className="board is-list">
-                      <div className="task-list"><div className="list-items">
-                        {tasks.map((task) => {
+                      <div className="task-list">
+                      {statuses.map(status => {
+                        const group = tasks.filter(task => task.status === status.value);
+                        if (!group.length) return null;
+                        const GroupIcon = { backlog: Clock3, in_progress: Settings2, review: Search, done: CircleCheck, blocked: TriangleAlert }[status.value];
+                        return <details className={`task-group ${status.value}`} key={status.value} open>
+                          <summary><span className="task-group-status" aria-hidden="true"><GroupIcon size={21} /></span><h2>{status.label}</h2><span className="count">{group.length}</span><ChevronRight size={16} className="task-group-toggle" aria-hidden="true" /></summary>
+                          <div className="list-items">
+                        {group.map((task) => {
                           const agent = bootstrap.agents.find((item) => item.id === task.assignee_id);
                           return (
-                            <button className={`task-card ${task.status}`} key={task.id} onClick={() => openTask(task.id)}>
+                            <button className={`task-card ${task.status}`} key={task.id} data-task-id={task.id} aria-current={routeTaskId === task.id ? "true" : undefined} onClick={() => openTask(task.id)}>
                               <div className="task-card-top">
                                 <span className="task-id">{task.short_id}</span>
                                 <PriorityMark priority={task.priority}/>
@@ -2434,7 +2529,6 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                                 <span className="task-type-tag">{taskTypes[task.task_type || "other"]}</span>
                                 {task.subproject_id && <span className="subproject-tag">{subprojectPath(board.subprojects || [], task.subproject_id)}</span>}
                               </div>
-                              <StatusPill status={task.status} />
                               <div className="task-card-footer">
                                 <span className="card-assignee">
                                   <Avatar agent={agent} small />
@@ -2448,7 +2542,10 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
                             </button>
                           );
                         })}
-                      </div></div>
+                          </div>
+                        </details>;
+                      })}
+                      </div>
                       {!tasks.length && <div className="empty-board">
                         <h2>Пока нет задач</h2>
                         <p>Нажмите «Новая задача», чтобы добавить первую карточку.</p>
@@ -2583,9 +2680,10 @@ export default function App({ initialWorkspace, initialWorkspaceWarning = "" }: 
           onRefresh={updateDetail}
           onChanged={changed}
           onCopyLink={copyTaskLink}
+          docked={view === "board"}
         />
       )}
-      {routeTaskId !== null && !detail && <Dialog title={taskError ? "Не удалось открыть задачу" : "Открываем задачу…"} onClose={closeDetail}>
+      {routeTaskId !== null && !detail && <Dialog title={taskError ? "Не удалось открыть задачу" : "Открываем задачу…"} onClose={closeDetail} drawer docked={view === "board"}>
         {taskError ? <><p role="alert">{taskError}</p><div className="form-actions"><button className="button secondary" onClick={() => { setTaskError(""); setTaskAttempt(value => value + 1); }}>Повторить</button><button className="button primary" onClick={closeDetail}>Закрыть сообщение</button></div></>
           : <p role="status">Загружаем карточку и её проект…</p>}
       </Dialog>}

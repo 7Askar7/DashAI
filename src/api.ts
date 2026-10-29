@@ -153,6 +153,15 @@ export type Bootstrap = {
   agents: Agent[];
   activity: Event[];
 };
+export type OverviewData = {
+  projects: { id: string; total: number; counts: Record<Status, number>; updated_at: string }[];
+  counts: Record<Status, number>;
+  tasks: Pick<Task, "id" | "short_id" | "project_id" | "title" | "task_type" | "status" | "priority" | "assignee_id" | "updated_at">[];
+  total: number;
+  offset: number;
+  limit: number;
+  updated_at: string;
+};
 export type Connectors = {
   base_url: string;
   python_command: string;
@@ -165,11 +174,11 @@ export type Connectors = {
 };
 
 export const statuses: { value: Status; label: string; color: string }[] = [
-  { value: "backlog", label: "Очередь", color: "#9da8b7" },
-  { value: "in_progress", label: "В работе", color: "#80bfff" },
-  { value: "review", label: "Проверка", color: "#c5a9ff" },
-  { value: "done", label: "Готово", color: "#b4f4a5" },
-  { value: "blocked", label: "Блокировка", color: "#fba7a7" },
+  { value: "backlog", label: "Очередь", color: "#b0b9d8" },
+  { value: "in_progress", label: "В работе", color: "#91caff" },
+  { value: "review", label: "Проверка", color: "#c4b1ff" },
+  { value: "done", label: "Готово", color: "#84dbb3" },
+  { value: "blocked", label: "Блокировка", color: "#ffacba" },
 ];
 export const priorities: Record<Priority, string> = {
   urgent: "Срочный",
